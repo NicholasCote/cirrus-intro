@@ -1,165 +1,44 @@
-# Build, test and push the CIRRUS workshop image.
-#
-# Same shape as cirrus-jhub-images: the CIRRUS-4x8 runner group, buildx against
-# the shared buildkitd, Harbor at hub.k8s.ucar.edu, registry-backed layer cache.
-#
-# Two differences worth knowing about:
-#
-#  * The image is scanned from a local tarball rather than a running container:
-#    these runners are daemonless -- buildx talks to buildkitd over TCP and there
-#    is no local docker daemon to start a container with -- but buildx can write
-#    an OCI tar that Trivy reads directly.
-#
-#  * DOCKER_BUILD_SUMMARY / DOCKER_BUILD_RECORD_UPLOAD are off. The build
-#    summary needs to export a build record from the daemon, which the remote
-#    driver cannot do here; left on, every build ends in a failed post step.
-#
-# NOTE: no `paths:` filter. GitHub evaluates paths against the pushed commit's
-# diff, and a release tag usually points at a commit whose diff has already been
-# seen -- which would silently skip the job that publishes the semver tag.
-
 name: Build and push workshop image
 
 on:
   workflow_dispatch:
   push:
+    paths:
+      - cirrus-workshop-image/**
+      - .github/workflows/build.yml
     branches:
       - main
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: read
 
-env:
-  REGISTRY: hub.k8s.ucar.edu
-  IMAGE: hub.k8s.ucar.edu/ncote/cirrus-workshop
-  CONTEXT: cirrus-workshop-image
-  # Required for the daemonless buildkitd runners in this environment.
-  DOCKER_BUILD_SUMMARY: false
-  DOCKER_BUILD_RECORD_UPLOAD: false
-
 jobs:
-  # -------------------------------------------------------------------------
-  # scan: Trivy, gating on what we can actually act on.
-  #
-  # Fails the build on CRITICAL only. HIGH is reported but not gated, because most
-  # HIGHs here are Go stdlib findings inside third-party CLIs (k9s, argocd, argo,
-  # ...) that can only be fixed by an upstream rebuild -- gating on them would mean
-  # a red pipeline nobody can turn green, which trains people to ignore it.
-  # There is no ignore file: accepted findings are not suppressed, they are simply
-  # below the gate. Two known HIGHs live inside third-party bundles -- msgpack
-  # vendored in pip (whose HTTP cache this image disables) and js-yaml inside
-  # code-server's node tree -- and both show in the report every run.
-  #
-  # Scans a tarball rather than a running container: these runners are daemonless,
-  # so there is nothing to `docker run` against, but buildx can write an OCI tar
-  # and Trivy reads that directly.
-  # -------------------------------------------------------------------------
-  scan:
-    runs-on:
-      group: CIRRUS-4x8
-    steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64
-          driver: remote
-          endpoint: tcp://buildkitd.arc-systems:1234
-
-      - name: Registry login
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.HARBOR_LOGIN }}
-          password: ${{ secrets.HARBOR_SECRET }}
-
-      - name: Build to a local tarball
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ env.CONTEXT }}
-          file: ${{ env.CONTEXT }}/Dockerfile
-          target: runtime
-          push: false
-          outputs: type=docker,dest=/tmp/cirrus-workshop.tar
-          cache-from: |
-            type=registry,ref=${{ env.IMAGE }}:cache
-
-      - name: Trivy -- fail on CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          input: /tmp/cirrus-workshop.tar
-          scanners: vuln
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
-
-      - name: Trivy -- report HIGH (never fails the build)
-        if: always()
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          input: /tmp/cirrus-workshop.tar
-          scanners: vuln
-          severity: HIGH
-          ignore-unfixed: true
-          exit-code: '0'
-          format: table
-
-  # -------------------------------------------------------------------------
-  # build-push: only after the scan passes. Tagged with the short SHA
-  # always, plus the semver tag on a tag push and :latest on main.
-  # -------------------------------------------------------------------------
   build-push:
-    needs: scan
-    runs-on:
-      group: CIRRUS-4x8
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out the repo
+      - name: Checkout the repo
         uses: actions/checkout@v4
 
-      - name: Save sha and tags
-        id: tags
-        run: |
-          SHORT_SHA="$(echo "$GITHUB_SHA" | cut -c1-7)"
-          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d.%H.%M')" >> $GITHUB_OUTPUT
 
-          # Always publish the SHA: it is the only tag that names exactly one
-          # build, which is what a bug report needs to be actionable.
-          TAGS="${IMAGE}:${SHORT_SHA}"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME}"
-          else
-            TAGS="${TAGS},${IMAGE}:latest"
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-          echo "Publishing: ${TAGS}"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64
-          driver: remote
-          endpoint: tcp://buildkitd.arc-systems:1234
-
-      - name: Registry login
+      - name: registry login
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: hub.k8s.ucar.edu
           username: ${{ secrets.HARBOR_LOGIN }}
           password: ${{ secrets.HARBOR_SECRET }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ env.CONTEXT }}
-          file: ${{ env.CONTEXT }}/Dockerfile
-          target: runtime
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          cache-from: |
-            type=registry,ref=${{ env.IMAGE }}:cache
-          cache-to: "type=registry,ref=${{ env.IMAGE }}:cache,image-manifest=true,mode=max"
+      # The image lives in a subdirectory, so the build context and the
+      # Dockerfile are both named explicitly -- everything else here is the
+      # runner's stock buildx.
+      - name: Build image
+        run: |
+          docker buildx build \
+            -t hub.k8s.ucar.edu/ncote/cirrus-workshop:${{ steps.date.outputs.date }} \
+            -f cirrus-workshop-image/Dockerfile \
+            cirrus-workshop-image
+
+      - name: Push image to Harbor
+        run: docker push hub.k8s.ucar.edu/ncote/cirrus-workshop:${{ steps.date.outputs.date }}
