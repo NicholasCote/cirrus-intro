@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#
+# Print the tool versions baked into this image, or verify them.
+#
+#   cirrus-versions           print /opt/cirrus/versions.txt
+#   cirrus-versions --check   run each tool and compare against that file
+#
+# The recorded file is written once at build time from the Dockerfile ARGs, so
+# it is the build's own account of what it installed. --check catches a pin that
+# was bumped in one place and not the other, and a binary that is on PATH but not
+# the version anyone thinks it is.
+
+set -uo pipefail
+
+VERSIONS_FILE="${CIRRUS_VERSIONS_FILE:-/opt/cirrus/versions.txt}"
+
+if [ ! -r "$VERSIONS_FILE" ]; then
+    printf 'cirrus-versions: ERROR: %s is missing or unreadable\n' "$VERSIONS_FILE" >&2
+    exit 1
+fi
+
+# Version output differs wildly between these tools (kubelogin puts it after
+# "git hash:", stern prefixes "version:", code-server appends the VS Code
+# version), so each one gets its own command and the comparison is a substring
+# match on the expected number rather than a parse.
+tool_version_cmd() {
+    case "$1" in
+        kubectl)     kubectl version --client=true -o json 2>/dev/null | jq -r '.clientVersion.gitVersion' ;;
+        kubelogin)   kubelogin --version 2>&1 | sed -n 's/^git hash: //p' ;;
+        helm)        helm version --short 2>/dev/null ;;
+        argocd)      argocd version --client --short 2>/dev/null ;;
+        stern)       stern --version 2>/dev/null ;;
+        yq)          yq --version 2>/dev/null ;;
+        # code-server writes a default config file on first run and logs that
+        # it did, before printing anything about itself -- so take the first
+        # line that actually starts with a version number.
+        code-server) code-server --version 2>/dev/null | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+' ;;
+        ext:*)       ls -1 "${CIRRUS_SYS_EXTENSIONS_DIR:-/opt/cirrus/code-server-extensions}" 2>/dev/null | tr 'A-Z' 'a-z' ;;
+        *)           python -c "import importlib.metadata as m; print(m.version('$1'))" 2>/dev/null ;;
+    esac
+}
+
+if [ "${1:-}" != "--check" ]; then
+    if [ -n "${1:-}" ]; then
+        printf 'usage: cirrus-versions [--check]\n' >&2
+        exit 2
+    fi
+    cat "$VERSIONS_FILE"
+    exit 0
+fi
+
+failed=0
+printf '%-52s %-22s %s\n' "TOOL" "EXPECTED" "REPORTED"
+while IFS=$'\t' read -r name expected; do
+    case "$name" in ''|\#*) continue ;; esac
+
+    reported="$(tool_version_cmd "$name" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')"
+    want="${expected#v}"
+
+    if [ -z "$reported" ]; then
+        printf '%-52s %-22s %s\n' "$name" "$expected" "MISSING (not on PATH / no version output)"
+        failed=$((failed + 1))
+    elif printf '%s' "$reported" | grep -qF -- "$want"; then
+        printf '%-52s %-22s %s\n' "$name" "$expected" "ok: ${reported}"
+    else
+        printf '%-52s %-22s %s\n' "$name" "$expected" "MISMATCH: ${reported}"
+        failed=$((failed + 1))
+    fi
+done < "$VERSIONS_FILE"
+
+if [ "$failed" -gt 0 ]; then
+    printf '\ncirrus-versions: %d version check(s) failed\n' "$failed" >&2
+    exit 1
+fi
+printf '\ncirrus-versions: all versions match %s\n' "$VERSIONS_FILE"

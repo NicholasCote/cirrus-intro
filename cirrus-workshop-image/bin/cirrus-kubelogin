@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#
+# ExecCredential cache in front of Azure kubelogin.
+#
+# Why this exists
+# ---------------
+# kubelogin >= 0.2 keeps its tokens in the Azure SDK's persistent cache
+# (pkg/internal/token/persistentcache.go -> azidentity/cache.New), which on
+# Linux is backed by libsecret over DBus. A pod has no Secret Service, so that
+# cache silently does not exist, and --cache-dir only ever holds auth.json --
+# the *account record*, not a token.
+#
+# The visible effect without this wrapper: kubectl runs the credential plugin
+# once per invocation, and every single invocation starts a new device-code
+# flow. `kubectl get pods` twice means signing in twice. That is unusable for a
+# workshop.
+#
+# So the ExecCredential kubelogin prints -- which already carries
+# status.expirationTimestamp -- is cached here, keyed by the exec args, and
+# replayed until it is about to expire. One sign-in per token lifetime instead
+# of one per command. When the access token expires the user signs in again:
+# without a keyring there is no refresh token to work from, and inventing a
+# place to keep one is not this script's job.
+#
+# The cached file holds a bearer token, mode 0600, under $CIRRUS_STATE_DIR --
+# the pod's own tmpfs, never the shared home, gone when the session ends. That
+# is the same thing the keyring would be holding if there were one.
+#
+# CIRRUS_TOKEN_CACHE=off turns all of this off and execs kubelogin directly.
+
+set -euo pipefail
+
+REAL="${CIRRUS_KUBELOGIN_BIN:-/usr/local/bin/kubelogin}"
+STATE_DIR="${CIRRUS_STATE_DIR:-/tmp/cirrus}"
+CACHE_DIR="${CIRRUS_TOKEN_CACHE_DIR:-${STATE_DIR}/kube/token-cache}"
+
+# Anything other than get-token (convert-kubeconfig, --version, ...) has no
+# credential to cache.
+if [ "${CIRRUS_TOKEN_CACHE:-on}" = "off" ] || [ "${1:-}" != "get-token" ]; then
+    exec "$REAL" "$@"
+fi
+
+# Keyed by the full arg list: a different --server-id or --tenant-id is a
+# different audience and must not share a token.
+key="$(printf '%s\0' "$@" | sha256sum | cut -d' ' -f1)"
+mkdir -p -- "$CACHE_DIR" 2>/dev/null || true
+chmod 0700 -- "$CACHE_DIR" 2>/dev/null || true
+cred="${CACHE_DIR}/${key}.json"
+lock="${CACHE_DIR}/${key}.lock"
+
+# Valid means: parses, has a token, and is not within a minute of expiry --
+# handing kubectl a credential that dies mid-request is worse than refreshing.
+credential_is_valid() {
+    local file="$1" ts exp now
+    [ -s "$file" ] || return 1
+    ts="$(jq -r '.status.expirationTimestamp // empty' "$file" 2>/dev/null)" || return 1
+    [ -n "$ts" ] || return 1
+    jq -e '.status.token // empty' "$file" >/dev/null 2>&1 || return 1
+    exp="$(date -d "$ts" +%s 2>/dev/null)" || return 1
+    now="$(date +%s)"
+    [ "$exp" -gt "$((now + 60))" ]
+}
+
+if credential_is_valid "$cred"; then
+    cat "$cred"
+    exit 0
+fi
+
+# Serialise sign-ins. Without this, a notebook and a terminal reaching for a
+# token at the same moment produce two device-code prompts for one session.
+#
+# The lock file is opened only once it is known to be writable. `exec 9>f` with
+# a redirection error would take the shell down, and -- the reason this is
+# spelled out rather than guarded with `2>/dev/null` -- redirections on a
+# command-less `exec` apply to the shell *permanently*: an `exec 9>f 2>/dev/null`
+# here would discard kubelogin's stderr for the rest of the run, which is where
+# the device-code URL and code are printed. That looks exactly like a hang.
+if : > "$lock" 2>/dev/null; then
+    exec 9>>"$lock"
+    flock -w "${CIRRUS_TOKEN_LOCK_WAIT:-600}" 9 || true
+fi
+
+# Whoever held the lock may have just refreshed it.
+if credential_is_valid "$cred"; then
+    cat "$cred"
+    exit 0
+fi
+
+# stdout is captured (it is the credential); stderr is deliberately NOT, so the
+# device-code URL and code reach the user's terminal as kubelogin prints them.
+tmp="${cred}.$$"
+umask 077
+if "$REAL" "$@" > "$tmp"; then
+    if jq -e '.status.token // empty' "$tmp" >/dev/null 2>&1; then
+        mv -f -- "$tmp" "$cred"
+        chmod 0600 -- "$cred" 2>/dev/null || true
+        cat "$cred"
+    else
+        # Not the shape we know how to cache -- pass it through untouched
+        # rather than store something we cannot reason about.
+        cat "$tmp"
+        rm -f -- "$tmp"
+    fi
+    exit 0
+fi
+rc=$?
+rm -f -- "$tmp"
+exit "$rc"

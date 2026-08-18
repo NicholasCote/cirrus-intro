@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+#
+# Workshop self-check.
+#
+#   cirrus-check          check the session environment
+#   cirrus-check 3        environment checks, then the lab 3 assertions
+#
+# Today only the environment checks exist: is there a session kubeconfig, is it
+# pointed at the workshop cluster and the user's own namespace, can a token
+# actually be obtained, and does an authorized call come back. That is the set
+# of things that makes every later lab fail in a confusing way if it is wrong.
+#
+# Per-lab modules drop in later as /opt/cirrus/labs/lab<N>.sh. Each one defines
+# a lab_checks() function and calls the same helpers used below:
+#
+#   check     "<description>" <command...>        # passes when the command exits 0
+#   check_eq  "<description>" "<want>" "<got>"    # passes when the strings match
+#   check_out "<description>" "<want-substring>" <command...>
+#
+# Nothing else in the file runs; the loader sources it and calls lab_checks.
+
+set -uo pipefail
+
+PROG="cirrus-check"
+DOCS_URL="https://ncar-hpc-docs.readthedocs.io/en/latest/compute-systems/cirrus/guides/10-kubectl/kubectl/"
+LABS_DIR="${CIRRUS_LABS_DIR:-/opt/cirrus/labs}"
+KUBECTL_TIMEOUT="${CIRRUS_KUBECTL_TIMEOUT:-300s}"
+
+PASSED=0
+FAILED=0
+
+pass() { PASSED=$((PASSED + 1)); printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
+fail() {
+    FAILED=$((FAILED + 1))
+    printf '  \033[31mFAIL\033[0m  %s\n' "$1"
+    if [ -n "${2:-}" ]; then
+        printf '%s\n' "$2" | sed 's/^/          /'
+    fi
+}
+
+check() {
+    local desc="$1"; shift
+    local out rc
+    out="$("$@" 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ]; then pass "$desc"; else fail "$desc" "$out"; fi
+    return 0
+}
+
+check_eq() {
+    local desc="$1" want="$2" got="$3"
+    if [ "$want" = "$got" ]; then
+        pass "$desc ($got)"
+    else
+        fail "$desc" "expected: ${want}
+     got: ${got:-<empty>}"
+    fi
+    return 0
+}
+
+check_out() {
+    local desc="$1" want="$2"; shift 2
+    local out rc
+    out="$("$@" 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF -- "$want"; then
+        pass "$desc"
+    else
+        fail "$desc" "expected output containing: ${want}
+$out"
+    fi
+    return 0
+}
+
+section() { printf '\n%s\n' "$1"; }
+
+LAB="${1:-}"
+if [ -n "$LAB" ] && ! printf '%s' "$LAB" | grep -Eq '^[0-9]+$'; then
+    printf '%s: ERROR: lab must be a number, got: %s\n' "$PROG" "$LAB" >&2
+    printf 'usage: %s [lab-number]\n' "$PROG" >&2
+    exit 2
+fi
+
+# ===========================================================================
+# Environment
+# ===========================================================================
+section "Session environment"
+
+KUBECONFIG_PATH="${KUBECONFIG:-}"
+SRC="$(cirrus-kubeconfig-src)"
+
+if [ -z "$KUBECONFIG_PATH" ]; then
+    fail "KUBECONFIG is set" "KUBECONFIG is empty; the entrypoint should have set it."
+elif [ ! -r "$KUBECONFIG_PATH" ]; then
+    fail "session kubeconfig is readable" "not readable: ${KUBECONFIG_PATH}
+Run cirrus-kubeconfig-init to rebuild it from ${SRC}."
+else
+    pass "session kubeconfig is readable (${KUBECONFIG_PATH})"
+fi
+
+# The session copy must not be the user's own file -- that one is shared with
+# their Casper and Derecho sessions and is only ever read.
+if [ -n "$KUBECONFIG_PATH" ] && [ -e "$KUBECONFIG_PATH" ] && [ -e "$SRC" ]; then
+    if [ "$(stat -c '%d:%i' -- "$KUBECONFIG_PATH" 2>/dev/null)" = "$(stat -c '%d:%i' -- "$SRC" 2>/dev/null)" ]; then
+        fail "session kubeconfig is a copy, not the user's own file" \
+             "KUBECONFIG and CIRRUS_KUBECONFIG_SRC are the same file: ${KUBECONFIG_PATH}"
+    else
+        pass "session kubeconfig is a copy, not the user's own file"
+    fi
+fi
+
+current_ctx="$(kubectl config current-context 2>/dev/null)"
+if [ -n "${CIRRUS_CONTEXT:-}" ]; then
+    check_eq "current context" "$CIRRUS_CONTEXT" "$current_ctx"
+elif [ -n "$current_ctx" ]; then
+    # No CIRRUS_CONTEXT means no name to insist on: a workstation kubeconfig
+    # calls the workshop cluster mlc1, while the config OOD hands out calls it
+    # cirrus. What matters is that a context resolves and its server is known.
+    ctx_server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)"
+    pass "a context is selected (${current_ctx} -> ${ctx_server:-unknown server})"
+else
+    fail "a context is selected" "no current context; run cirrus-kubeconfig-init"
+fi
+
+# A session config that resolves no context is the state that makes kubectl fall
+# back to the pod's service account, and the reason is always either in the
+# source file or in the bootstrap's own output -- neither of which is visible to
+# someone sitting in a browser. Put both in front of them.
+if [ -z "$current_ctx" ]; then
+    if [ -r "$SRC" ]; then
+        src_ctxs="$(kubectl --kubeconfig "$SRC" config get-contexts -o name 2>/dev/null | paste -sd' ' -)"
+        printf '        contexts in %s: %s\n' "$SRC" "${src_ctxs:-<none: empty, or not a kubeconfig>}"
+        printf '        (that path is your GLADE home, not your workstation -- they can differ)\n'
+    fi
+    boot_log="${CIRRUS_BOOTSTRAP_LOG:-${CIRRUS_STATE_DIR:-/tmp/cirrus}/bootstrap.log}"
+    if [ -s "$boot_log" ]; then
+        printf '        what the bootstrap reported at session start:\n'
+        sed 's/^/          /' "$boot_log"
+    fi
+    printf '        re-run it to retry and see the error live:  cirrus-kubeconfig-init\n'
+fi
+
+NAMESPACE="$(kubectl config view --minify -o jsonpath='{..namespace}' 2>/dev/null)"
+# Only CIRRUS_NAMESPACE can settle what the namespace *should* be -- OOD knows
+# the authenticated username, this container does not. Re-deriving a guess here
+# and comparing it to the guess the bootstrap made would only be checking that
+# two guesses agree, so when it is unset this reports what it can and says what
+# it cannot.
+if [ -n "${CIRRUS_NAMESPACE:-}" ]; then
+    check_eq "namespace" "$CIRRUS_NAMESPACE" "$NAMESPACE"
+else
+    case "$NAMESPACE" in
+        ood-?*) pass "namespace is an ood-<user> namespace (${NAMESPACE}) -- CIRRUS_NAMESPACE is unset, so the <user> part is unverified" ;;
+        '')     fail "namespace" "no namespace is set on the current context; run cirrus-kubeconfig-init" ;;
+        *)      fail "namespace" "expected an ood-<user> namespace, got: ${NAMESPACE}" ;;
+    esac
+fi
+
+# Home isolation: a cache or a wheel landing in the shared GLADE home is the
+# failure mode that breaks the user's HPC sessions rather than this one, so it
+# is worth asserting even though nothing here has failed yet.
+section "Home directory isolation"
+check_eq "PIP_USER is off" "false" "${PIP_USER:-<unset>}"
+for var in PYTHONUSERBASE XDG_CACHE_HOME XDG_DATA_HOME JUPYTER_DATA_DIR JUPYTER_RUNTIME_DIR IPYTHONDIR HELM_CACHE_HOME HELM_CONFIG_HOME HELM_DATA_HOME; do
+    val="$(eval "printf '%s' \"\${$var:-}\"")"
+    if [ -z "$val" ]; then
+        fail "${var} is redirected out of \$HOME" "${var} is unset"
+    elif [ -n "${HOME:-}" ] && case "$val" in "${HOME}"/*) true ;; *) false ;; esac; then
+        fail "${var} is redirected out of \$HOME" "${var}=${val} is inside \$HOME"
+    else
+        pass "${var} is redirected out of \$HOME (${val})"
+    fi
+done
+
+# A shell without readline is what produces ^[[A instead of command history in
+# session terminals, and both Jupyter and code-server take the shell from $SHELL.
+case "${SHELL:-}" in
+    '')            fail "terminals get a shell with line editing" "SHELL is unset, so terminals fall back to sh (dash): no history, arrow keys print ^[[A" ;;
+    */bash|*/zsh)  if [ -x "$SHELL" ]; then pass "terminals get a shell with line editing (${SHELL})"; else fail "terminals get a shell with line editing" "SHELL=${SHELL} is not executable in this image"; fi ;;
+    *)             fail "terminals get a shell with line editing" "SHELL=${SHELL} has no line editing (or is not in this image); terminals will print ^[[A for arrow keys" ;;
+esac
+
+# JUPYTER_CONFIG_DIR is allowed to live in $HOME -- it holds settings worth
+# keeping -- but never as $HOME/.jupyter, which the user's HPC sessions read.
+jcd="${JUPYTER_CONFIG_DIR:-}"
+if [ -z "$jcd" ]; then
+    fail "JUPYTER_CONFIG_DIR is not \$HOME/.jupyter" "JUPYTER_CONFIG_DIR is unset, so Jupyter will use \$HOME/.jupyter"
+elif [ -n "${HOME:-}" ] && [ "$jcd" = "${HOME}/.jupyter" ]; then
+    fail "JUPYTER_CONFIG_DIR is not \$HOME/.jupyter" "JUPYTER_CONFIG_DIR=${jcd}"
+else
+    pass "JUPYTER_CONFIG_DIR is not \$HOME/.jupyter (${jcd})"
+fi
+
+plugin="$(kubectl config view --minify -o jsonpath='{.users[0].user.exec.command}' 2>/dev/null)"
+case "$plugin" in
+    cirrus-kubelogin)
+        pass "credential plugin is the session token cache (cirrus-kubelogin)" ;;
+    kubelogin)
+        if [ "${CIRRUS_TOKEN_CACHE:-on}" = "off" ]; then
+            pass "credential plugin is plain kubelogin (CIRRUS_TOKEN_CACHE=off)"
+        else
+            fail "credential plugin is the session token cache" \
+                 "exec.command is plain kubelogin, whose own token cache needs a libsecret
+keyring this pod does not have -- every kubectl call would start a new
+device-code sign-in. Re-run cirrus-kubeconfig-init."
+        fi ;;
+    '')
+        # No exec block at all is fine for a token or client-cert kubeconfig.
+        if [ -n "$(kubectl config view --minify --raw -o jsonpath='{.users[0].user.token}' 2>/dev/null)" ]; then
+            pass "credentials are a static token (no credential plugin needed)"
+        else
+            fail "the kubeconfig provides credentials" \
+                 "no exec plugin and no token on the current context's user"
+        fi ;;
+    /*)
+        # An absolute path is the shape of the HPC-only plugin
+        # (/opt/ncar/sbin/get-cirrus-token.sh), which no container has.
+        if [ -x "$plugin" ]; then
+            pass "credential plugin exists and is executable (${plugin})"
+        else
+            fail "the credential plugin can run in this container" \
+                 "The kubeconfig names ${plugin}, which does not exist here.
+That path exists on Casper and Derecho; a container has no access to it, so
+nothing in this session can authenticate. The workstation-style CIRRUS
+kubeconfig uses Azure kubelogin instead, which this image ships."
+        fi ;;
+    *)
+        if command -v "$plugin" >/dev/null 2>&1; then
+            pass "credential plugin is on PATH (${plugin})"
+        else
+            fail "the credential plugin can run in this container" \
+                 "exec.command is ${plugin}, which is not on PATH in this image."
+        fi ;;
+esac
+
+# A certificate-authority given as a path is another HPC-host assumption: the
+# CIRRUS kubeconfig points at /etc/pki/tls/certs/cirrus-ca.crt, which no image
+# has. cirrus-kubeconfig-init substitutes the pod's own cluster CA when it can.
+ca_path="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}' 2>/dev/null)"
+if [ -z "$ca_path" ]; then
+    pass "cluster CA is embedded in the kubeconfig (no file needed)"
+elif [ -r "$ca_path" ]; then
+    pass "cluster CA file is readable (${ca_path})"
+else
+    fail "cluster CA is available" \
+         "The kubeconfig references ${ca_path}, which does not exist in this
+container -- that path is on Casper and Derecho. Re-run cirrus-kubeconfig-init to
+substitute this pod's own cluster CA, or ask the CIRRUS team for a kubeconfig
+with embedded certificate-authority-data."
+fi
+
+# ===========================================================================
+# Cluster access. Everything above is local; this is the first thing that
+# actually talks to mlc1, and the first that can prompt for a device code.
+# ===========================================================================
+section "Cluster access"
+
+if [ -n "${CIRRUS_SKIP_CLUSTER_CHECKS:-}" ]; then
+    printf '  SKIP  cluster checks (CIRRUS_SKIP_CLUSTER_CHECKS is set)\n'
+else
+    # Identity first, if the cluster will tell us. `kubectl auth whoami` needs the
+    # SelfSubjectReview API, which mlc1 does not have enabled -- so a failure
+    # here is not evidence of anything and must not be reported as one.
+    #
+    # stderr is left attached to the terminal throughout this section on purpose:
+    # kubelogin prints the device-code URL and code there, and capturing it means
+    # the user stares at a hung check for the whole timeout and then reads the
+    # prompt in the failure text, too late to use.
+    whoami_tmp="$(mktemp "${TMPDIR:-/tmp}/cirrus-check.XXXXXX")"
+    whoami_err="$(mktemp "${TMPDIR:-/tmp}/cirrus-check.XXXXXX")"
+    printf '  ....  contacting the API server (sign in below if prompted)\n'
+    kubectl auth whoami -o jsonpath='{.status.userInfo.username}' \
+        --request-timeout="$KUBECTL_TIMEOUT" > "$whoami_tmp" 2> >(tee "$whoami_err" >&2) || true
+    whoami_out="$(cat "$whoami_tmp")"
+    whoami_msg="$(cat "$whoami_err")"
+    rm -f "$whoami_tmp" "$whoami_err"
+
+    case "$whoami_out" in
+        system:serviceaccount:*)
+            fail "authenticated as the user, not the pod's service account" \
+                 "This session is authenticating as ${whoami_out}.
+kubectl found no usable kubeconfig and fell back to the pod's in-cluster service
+account. Re-run cirrus-kubeconfig-init and read what it reports."
+            ;;
+        '')
+            case "$whoami_msg" in
+                *selfsubjectreviews*|*SelfSubjectReview*)
+                    printf '  SKIP  identity lookup (this cluster does not enable the SelfSubjectReview API)\n' ;;
+                *) fail "identity could be looked up" "$whoami_msg" ;;
+            esac
+            ;;
+        *) pass "identity confirmed by the API server (${whoami_out})" ;;
+    esac
+
+    # This is the check that matters, and it works on every cluster: it forces a
+    # token to be obtained and an authorization decision to be made. Its error
+    # text is also where the service-account fallback confesses itself, naming
+    # system:serviceaccount:<ns>:default -- so it is scanned for that even when
+    # the identity lookup above was unavailable.
+    if [ -n "$NAMESPACE" ]; then
+        cani_tmp="$(mktemp "${TMPDIR:-/tmp}/cirrus-check.XXXXXX")"
+        kubectl auth can-i list pods -n "$NAMESPACE" --request-timeout="$KUBECTL_TIMEOUT" \
+            > "$cani_tmp" 2>&1 || true
+        cani_out="$(cat "$cani_tmp")"
+        rm -f "$cani_tmp"
+
+        case "$cani_out" in
+            *system:serviceaccount:*)
+                fail "authenticated as the user, not the pod's service account" \
+                     "The API server answered for the pod's service account, not for you:
+${cani_out}
+kubectl found no usable kubeconfig and fell back to in-cluster credentials.
+Re-run cirrus-kubeconfig-init and read what it reports." ;;
+            yes*)
+                pass "token accepted and authorized to list pods in ${NAMESPACE}" ;;
+            no*)
+                # The expected first-day failure for a new attendee: Entra issued a
+                # token, so sign-in worked, but nothing has granted them rights in
+                # their own namespace yet. Signing in and being authorized are
+                # different things, and the difference is not obvious from a bare
+                # "Forbidden" later in a lab.
+                fail "authorized to list pods in ${NAMESPACE}" \
+                     "Sign-in worked -- the API server knows who you are -- but this identity has
+no permissions in ${NAMESPACE}.
+
+That is usually onboarding, not a broken session: CIRRUS grants namespace access
+through a Capsule tenant, and a brand-new account has none until it is added.
+Ask the CIRRUS team to grant you access to ${NAMESPACE}, quoting the identity
+above, and re-run ${PROG}.
+
+If ${NAMESPACE} is simply not your namespace, set CIRRUS_NAMESPACE instead.
+Docs: ${DOCS_URL}" ;;
+            *)
+                fail "token accepted by the API server" "$cani_out
+If a device-code prompt appeared and timed out, re-run ${PROG} and complete it.
+Timeout is ${KUBECTL_TIMEOUT} (CIRRUS_KUBECTL_TIMEOUT).
+Docs: ${DOCS_URL}" ;;
+        esac
+    else
+        fail "authorized call" "no namespace set on the current context"
+    fi
+fi
+
+# ===========================================================================
+# Lab module, if one was asked for
+# ===========================================================================
+if [ -n "$LAB" ]; then
+    lab_file="${LABS_DIR}/lab${LAB}.sh"
+    section "Lab ${LAB}"
+    if [ -r "$lab_file" ]; then
+        # shellcheck disable=SC1090
+        . "$lab_file"
+        if declare -F lab_checks >/dev/null 2>&1; then
+            lab_checks
+        else
+            fail "lab ${LAB} module" "${lab_file} does not define lab_checks()"
+        fi
+    else
+        fail "lab ${LAB} module" "no checks installed yet for lab ${LAB} (expected ${lab_file})"
+    fi
+fi
+
+# ===========================================================================
+section "Summary"
+printf '  %d passed, %d failed\n' "$PASSED" "$FAILED"
+if [ "$FAILED" -gt 0 ]; then
+    printf '\n%s: %d check(s) failed. Details above; CIRRUS docs: %s\n' "$PROG" "$FAILED" "$DOCS_URL" >&2
+    exit 1
+fi
