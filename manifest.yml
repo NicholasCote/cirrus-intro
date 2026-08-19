@@ -5,8 +5,4 @@ subcategory: Servers
 role: batch_connect
 description: |
   Launches the CIRRUS Kubernetes workshop session — JupyterLab or VS Code, your
-  choice — with `kubectl`, `helm`, `argocd`, `stern` and `kubelogin` already
-  pointed at the `mlc1` cluster and your own `ood-<user>` namespace.
-
-  Sign in once with the device code your first `kubectl` prints, then run
-  `cirrus-check` to confirm the session is ready.
+  choice
