@@ -170,6 +170,18 @@ for var in PYTHONUSERBASE XDG_CACHE_HOME XDG_DATA_HOME JUPYTER_DATA_DIR JUPYTER_
     fi
 done
 
+# A numeric username is what container runtimes leave behind when they synthesise
+# a passwd entry, and it shows up in every prompt, git commit and ssh key comment.
+resolved_user="$(id -un 2>/dev/null || true)"
+case "$resolved_user" in
+    '')       fail "your uid resolves to a username" "getpwuid($(id -u)) returned nothing; tools that need a username will fail" ;;
+    *[!0-9]*) pass "your uid resolves to a username (${resolved_user})" ;;
+    *)        fail "your uid resolves to a username" \
+                   "id -un returns '${resolved_user}' -- the uid, not a name. Prompts, git and
+ssh will all show a number. The entrypoint is supposed to fix this via nss_wrapper;
+check the session log for a libnss_wrapper warning." ;;
+esac
+
 # A shell without readline is what produces ^[[A instead of command history in
 # session terminals, and both Jupyter and code-server take the shell from $SHELL.
 case "${SHELL:-}" in

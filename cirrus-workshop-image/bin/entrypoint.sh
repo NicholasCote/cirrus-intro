@@ -85,42 +85,83 @@ mkdir -p \
 # write to /etc.
 # ---------------------------------------------------------------------------
 setup_nss_wrapper() {
-    local uid gid lib name passwd_file group_file
+    local uid gid lib want_name want_group cur_name cur_group
+    local passwd_file group_file need_passwd=0 need_group=0
     uid="$(id -u)"
     gid="$(id -g)"
 
-    if getent passwd "$uid" >/dev/null 2>&1; then
+    # The names OOD tells us. They are the authority: the container cannot know
+    # them, and the pod spec passes both.
+    want_name="${USER:-${NB_USER:-}}"
+    case "${want_name}" in ''|*[!a-zA-Z0-9._-]*) want_name="" ;; esac
+    [ -n "$want_name" ] || want_name="cirrus-${uid}"
+    want_group="${GROUP:-}"
+    case "${want_group}" in *[!a-zA-Z0-9._-]*) want_group="" ;; esac
+
+    # `|| true` on both: with no entry, getent exits 2, pipefail propagates it and
+    # set -e kills the entrypoint here -- before it has logged anything, so the
+    # session dies with an empty log. That is the k8s case, where nothing has
+    # synthesised an entry.
+    cur_name="$(getent passwd "$uid" 2>/dev/null | cut -d: -f1 || true)"
+    cur_group="$(getent group "$gid" 2>/dev/null | cut -d: -f1 || true)"
+
+    # "Does an entry exist" is the wrong question, and asking it is what made
+    # every prompt read 41188@pod instead of ncote@pod. Container runtimes
+    # synthesise an entry whose *name is the uid* --
+    #   41188:*:41188:1000:container user:/:/bin/sh
+    # -- which satisfies a existence check while being useless: getpwuid returns
+    # "41188", so bash's \u, whoami, git and ssh all show a number.
+    if [ -z "$cur_name" ] || [ "$cur_name" = "$uid" ]; then
+        need_passwd=1
+    else
+        case "$cur_name" in
+            *[!0-9]*) : ;;          # has a non-digit: a real name, leave it alone
+            *) need_passwd=1 ;;     # all digits: the uid wearing a name's clothes
+        esac
+    fi
+
+    # Likewise the group. gid 1000 resolves to the image's own "ubuntu" group, so
+    # without this the session reports gid=1000(ubuntu) for a user whose group is
+    # ncar. Only when OOD told us the real name.
+    if [ -n "$want_group" ] && [ "$cur_group" != "$want_group" ]; then
+        need_group=1
+    fi
+
+    if [ "$need_passwd" -eq 0 ] && [ "$need_group" -eq 0 ]; then
         return 0
     fi
 
     lib="$(cat /opt/cirrus/nss_wrapper_lib 2>/dev/null || true)"
     if [ -z "$lib" ] || [ ! -r "$lib" ]; then
-        warn "uid ${uid} has no passwd entry and libnss_wrapper.so was not found;"
-        warn "tools that call getpwuid() (git, ssh) may report a failed user lookup."
+        warn "libnss_wrapper.so was not found; the session will report uid ${uid} as"
+        warn "'${cur_name:-<unresolved>}' and tools that call getpwuid() may complain."
         return 0
-    fi
-
-    name="${USER:-${NB_USER:-cirrus}}"
-    if getent passwd "$name" >/dev/null 2>&1; then
-        name="cirrus-${uid}"
     fi
 
     passwd_file="${STATE_DIR}/passwd"
     group_file="${STATE_DIR}/group"
-    cp /etc/passwd "$passwd_file"
-    cp /etc/group  "$group_file"
+
+    # Existing entries for this uid/gid are filtered out rather than shadowed:
+    # nss_wrapper takes the first match, so leaving the runtime's numeric line in
+    # place would win over ours.
+    grep -v "^[^:]*:[^:]*:${uid}:" /etc/passwd > "$passwd_file" 2>/dev/null || true
     printf '%s:x:%s:%s:CIRRUS workshop user:%s:/bin/bash\n' \
-        "$name" "$uid" "$gid" "$HOME" >> "$passwd_file"
-    if ! getent group "$gid" >/dev/null 2>&1; then
-        printf '%s:x:%s:\n' "$name" "$gid" >> "$group_file"
+        "$want_name" "$uid" "$gid" "$HOME" >> "$passwd_file"
+
+    if [ -n "$want_group" ]; then
+        grep -v "^[^:]*:[^:]*:${gid}:" /etc/group > "$group_file" 2>/dev/null || true
+        printf '%s:x:%s:\n' "$want_group" "$gid" >> "$group_file"
+    else
+        cp /etc/group "$group_file"
+        getent group "$gid" >/dev/null 2>&1 || printf '%s:x:%s:\n' "$want_name" "$gid" >> "$group_file"
     fi
 
     export NSS_WRAPPER_PASSWD="$passwd_file"
     export NSS_WRAPPER_GROUP="$group_file"
     export LD_PRELOAD="${lib}${LD_PRELOAD:+:${LD_PRELOAD}}"
-    export USER="${USER:-$name}"
-    export LOGNAME="${LOGNAME:-$name}"
-    log "uid ${uid} has no passwd entry; answering lookups via nss_wrapper as '${name}'"
+    export USER="$want_name"
+    export LOGNAME="${LOGNAME:-$want_name}"
+    log "uid ${uid} resolves as '${want_name}'${want_group:+, gid ${gid} as '${want_group}'} (via nss_wrapper)"
 }
 setup_nss_wrapper
 
@@ -337,8 +378,19 @@ if [ -z "$BASE_URL" ] && [ -n "${CIRRUS_BASE_URL_FILE:-}" ]; then
         # Last path-looking line, not the whole file: the init container appends
         # to a configmap key, so a seeded comment or a second append would
         # otherwise be concatenated into a nonsense prefix.
-        BASE_URL="$(grep -oE '^[[:space:]]*/[^[:space:]]*' "$CIRRUS_BASE_URL_FILE" 2>/dev/null | tr -d '[:space:]' | tail -1)"
-        log "base URL read from ${CIRRUS_BASE_URL_FILE}: ${BASE_URL:-<empty>}"
+        # `|| true`: an empty file -- which is exactly what a failed init container
+        # leaves behind -- makes grep exit 1, and under pipefail + set -e that kills
+        # the session silently instead of falling through to the warning below.
+        BASE_URL="$(grep -oE '^[[:space:]]*/[^[:space:]]*' "$CIRRUS_BASE_URL_FILE" 2>/dev/null | tr -d '[:space:]' | tail -1 || true)"
+        if [ -n "$BASE_URL" ]; then
+            log "base URL read from ${CIRRUS_BASE_URL_FILE}: ${BASE_URL}"
+        else
+            warn "${CIRRUS_BASE_URL_FILE} is empty -- the init container that computes"
+            warn "the base URL did not write one. Check:"
+            warn "    kubectl logs \$POD -c add-baseurl-to-cfg"
+            warn "Serving at / instead, which behind OOD's /node/ proxy renders as a"
+            warn "blank page: every asset request goes to a path this server does not serve."
+        fi
     else
         warn "CIRRUS_BASE_URL_FILE=${CIRRUS_BASE_URL_FILE} is not readable."
         warn "Serving at / instead. Behind OOD's /node/ proxy that yields a blank page,"
@@ -431,6 +483,49 @@ code)
     if [ -d "$SYS_EXT_DIR" ] && [ -z "$(ls -A "$EXT_DIR" 2>/dev/null)" ]; then
         cp -a "${SYS_EXT_DIR}/." "${EXT_DIR}/" 2>/dev/null || \
             warn "could not seed extensions from ${SYS_EXT_DIR}"
+    fi
+
+    # JupyterLab hides dotfiles in its file browser; VS Code shows everything, so
+    # the same GLADE home reads as a wall of .cache/.conda/.npm/.vscode-server
+    # noise in one editor and a short list in the other. Seed VS Code's user
+    # settings to match Jupyter, so switching editors does not change what the
+    # home directory appears to contain.
+    #
+    # Written only when absent, so anything the user changes in-session survives.
+    # The watcher and search excludes are here for a different reason: $HOME is
+    # NFS, and letting VS Code watch and index every cache directory on GLADE is
+    # slow for the user and unkind to the filer.
+    USER_SETTINGS="${DATA_DIR}/User/settings.json"
+    if [ ! -f "$USER_SETTINGS" ]; then
+        mkdir -p -- "$(dirname -- "$USER_SETTINGS")"
+        cat > "$USER_SETTINGS" <<'SETTINGS'
+{
+  "files.exclude": {
+    "**/.*": true,
+    "**/.github": false,
+    "**/.gitignore": false,
+    "**/.dockerignore": false
+  },
+  "files.watcherExclude": {
+    "**/.cache/**": true,
+    "**/.conda/**": true,
+    "**/.npm/**": true,
+    "**/.local/**": true,
+    "**/.vscode-server/**": true,
+    "**/node_modules/**": true
+  },
+  "search.exclude": {
+    "**/.cache": true,
+    "**/.conda": true,
+    "**/.npm": true,
+    "**/.local": true,
+    "**/node_modules": true
+  },
+  "search.followSymlinks": false,
+  "telemetry.telemetryLevel": "off"
+}
+SETTINGS
+        log "seeded VS Code settings at ${USER_SETTINGS} (dotfiles hidden, as in JupyterLab)"
     fi
 
     args=(
