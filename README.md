@@ -1,20 +1,27 @@
-# CIRRUS Workshop — Open OnDemand app
+# CIRRUS Workshop
 
-One Batch Connect app that launches the workshop image as either JupyterLab or
-VS Code, with the shell chosen on the form.
+An Open OnDemand app that launches a Kubernetes workshop session — JupyterLab or
+VS Code, chosen on the form — plus the container image it runs.
+
+**The repository root is the OOD app root.** OOD looks for `manifest.yml`,
+`form.yml`, `submit.yml.erb` and `template/` there and nowhere else; nested in a
+subdirectory it reports *"Manifest is missing, add a title and description"*,
+which reads like a broken manifest rather than a misplaced one.
 
 ```
-manifest.yml     app name, category, description
-form.yml         editor, shell, working dir, cpu, memory
-submit.yml.erb   pod spec: image, env, mounts, init containers
-view.html.erb    the Connect button (picks /node/ vs /rnode/)
-info.md.erb      session card: which editor and shell were chosen
+manifest.yml            app name, category, description
+form.yml                editor, shell, working dir, cpu, memory
+submit.yml.erb          pod spec: image, env, mounts, init containers
+view.html.erb           the Connect button (picks /node/ vs /rnode/)
+info.md.erb             session card: which editor and shell were chosen
+template/               required by Batch Connect; empty, since submit.yml.erb
+                        uses the built-in "basic" template
+cirrus-workshop-image/  the image this app launches -- own README, own Dockerfile
+.github/workflows/      builds and pushes that image to Harbor on a date tag
 ```
 
-Deploy as any other OOD app — this directory is the app root, so it is normally
-its own repository (as `cirrus-ood-vscode` is) or a directory under
-`/var/www/ood/apps/sys/`. It lives here for now so it versions alongside the
-image it launches.
+`cirrus-workshop-image/` and `.github/` are ignored by OOD, so the app and the
+image it launches version together.
 
 ## The one structural decision
 
