@@ -20,8 +20,16 @@
   # Re-validate the selects rather than trusting them. The form only offers these
   # values, but submit.yml.erb interpolates them into a pod spec and a shell
   # command, so a bad value here is a broken manifest at best.
-  editor = (editor.to_s == "code") ? "code" : "jupyter"
-  shell  = %w[/bin/bash /bin/zsh /bin/tcsh].include?(login_shell.to_s) ? login_shell.to_s : "/bin/bash"
+  #
+  # NEVER assign to a name that is also a form field. Form values arrive as
+  # methods, and `editor = editor.to_s == ...` makes `editor` a local for the whole
+  # scope -- so the right-hand side reads the unassigned local (nil) instead of the
+  # form value, and every VS Code launch silently came up as JupyterLab. Ruby
+  # decides that at parse time, so there is no error to notice. The other CIRRUS
+  # apps avoid it the same way: `image_ref` from `custom_image`, `workdir` from
+  # `working_dir`.
+  editor_choice = (editor.to_s == "code") ? "code" : "jupyter"
+  shell_path    = %w[/bin/bash /bin/zsh /bin/tcsh].include?(login_shell.to_s) ? login_shell.to_s : "/bin/bash"
 
   # OOD ships two proxies and they are not interchangeable.
   #
@@ -36,7 +44,7 @@
   # view.html.erb has to build the right URL, and it cannot see form values --
   # only the connection info and the keys of <pod>-secret. So the choice is
   # written into that Secret below.
-  proxy = (editor == "code") ? "rnode" : "node"
+  proxy = (editor_choice == "code") ? "rnode" : "node"
 
   workdir = working_dir.to_s.strip
   workdir = "#{user.home}/cirrus-workshop" if workdir.empty?
@@ -46,10 +54,6 @@
   # volumeMount per configmap file and two files sharing a mountPath produce
   # duplicate mountPaths, which the API server rejects outright.
   base_url_file = "base_url"
-
-  # GECOS comes from the site's user database, so it is the one field here that
-  # could contain a colon or a newline and break the passwd line format.
-  gecos = user.gecos.to_s.gsub(/[:\r\n]/, " ").strip
 -%>
 ---
 batch_connect:
@@ -63,7 +67,7 @@ script:
       # token is space-free on purpose: ood_core renders this into the pod's
       # `command` array by splitting on whitespace, so a quoted argument would not
       # survive.
-      command: "/usr/local/bin/entrypoint.sh <%= editor %>"
+      command: "/usr/local/bin/entrypoint.sh <%= editor_choice %>"
       restart_policy: "OnFailure"
       # Start in the user's GLADE home. The image's own WORKDIR is irrelevant here
       # and the session runs as the user's real uid, so nothing will cd for us.
@@ -86,7 +90,7 @@ script:
         # Terminals open with the shell chosen on the form. The image validates it
         # and falls back to bash if it is not installed, rather than handing the
         # user a session with no working terminal.
-        CIRRUS_SHELL: "<%= shell %>"
+        CIRRUS_SHELL: "<%= shell_path %>"
 
         CIRRUS_WORKDIR: "<%= workdir %>"
         CIRRUS_PORT: "8080"
@@ -101,7 +105,7 @@ script:
 
         # OOD authenticates the user before the proxy reaches this pod.
         CIRRUS_JUPYTER_AUTH: "none"
-<%- if editor == "jupyter" -%>
+<%- if editor_choice == "jupyter" -%>
 
         # Written by the add-baseurl-to-cfg init container below.
         CIRRUS_BASE_URL_FILE: "/cirrus-baseurl/<%= base_url_file %>"
@@ -115,7 +119,7 @@ script:
         host: "gladenfs.hpc.ucar.edu"
         path: "/gpfs/u/home/<%= user.name %>"
         destination_path: "<%= user.home %>"
-<%- if editor == "jupyter" -%>
+<%- if editor_choice == "jupyter" -%>
     configmap:
       files:
         # Starts empty; the init container appends the computed base URL. The
@@ -164,7 +168,7 @@ script:
           - "/bin/bash"
           - "-c"
           - "kubectl create secret generic $(hostname)-secret --from-literal=proxy=<%= proxy %> --dry-run=client -o yaml | kubectl apply -f - || true"
-<%- if editor == "jupyter" -%>
+<%- if editor_choice == "jupyter" -%>
 
       # Compute /node/<nodeName>/<nodePort>/ and write it where the container will
       # read it. This cannot be done in the pod spec: the NodePort is assigned when
