@@ -1,0 +1,21 @@
+<%#
+  Rendered into the session card by the dashboard.
+
+  The binding here is the BatchConnect::Session, so user_context is available --
+  the launch form values, read back from user_defined_context.json. That is a
+  different binding from view.html.erb, which is why the editor choice has to
+  reach the Connect button through the pod's Secret instead of from here.
+
+  Keys are form attribute ids, so this tracks form.yml's `editor` and
+  `login_shell`. Both are shown because both change what the session is, and
+  nothing else on the card reveals either -- the dashboard shows host, times and
+  session id, and the app title is fixed by manifest.yml.
+-%>
+<%- editor = user_context["editor"].to_s -%>
+<%- shell  = user_context["login_shell"].to_s -%>
+**Editor:** <%= editor == "code" ? "VS Code" : "JupyterLab" %>
+<%- unless shell.empty? -%>
+ &middot; **Shell:** `<%= File.basename(shell) %>`
+<%- end -%>
+
+Run `cirrus-check` in a terminal to confirm cluster access.

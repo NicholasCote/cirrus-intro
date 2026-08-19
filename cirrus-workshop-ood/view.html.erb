@@ -1,0 +1,50 @@
+<%#
+  The Connect button.
+
+  `host` and `port` come from the connection info the kubernetes adapter
+  assembles -- host from the pod's node, port from the service's NodePort.
+  `proxy` comes from <pod>-secret, written by the add-proxy-to-secret init
+  container, because this template cannot see the launch form: its binding has
+  the connection info and the Secret's keys, and nothing else.
+
+  Which proxy is not cosmetic. OOD ships two and they behave differently:
+
+    /node/HOST/PORT/...   forwards the whole path. JupyterLab is told the prefix
+                          via CIRRUS_BASE_URL_FILE and serves it.
+    /rnode/HOST/PORT/...  strips the prefix. code-server needs that, having no
+                          base-path setting of its own.
+
+  Cross them and the session comes up blank rather than erroring, which is a
+  miserable thing to debug from a browser.
+
+  No password is posted, unlike the other CIRRUS OOD apps: OOD has already
+  authenticated the user before the proxy reaches this pod, and both servers run
+  with their own auth disabled. So a plain link is enough.
+
+  If `proxy` is missing -- the init container failed, or this OOD version does not
+  surface extra Secret keys -- both buttons are offered rather than raising a
+  NameError and leaving the user with no way in at all.
+-%>
+<%- kind = (defined?(proxy) && !proxy.to_s.strip.empty?) ? proxy.to_s.strip : nil -%>
+<%- if kind == "rnode" -%>
+  <a class="btn btn-primary" target="_blank" href="/rnode/<%= host %>/<%= port %>/">
+    <i class="fa fa-code"></i> Connect to VS Code
+  </a>
+<%- elsif kind == "node" -%>
+  <a class="btn btn-primary" target="_blank" href="/node/<%= host %>/<%= port %>/">
+    <i class="fa fa-jupyter"></i> Connect to JupyterLab
+  </a>
+<%- else -%>
+  <a class="btn btn-primary" target="_blank" href="/node/<%= host %>/<%= port %>/">
+    <i class="fa fa-jupyter"></i> Connect to JupyterLab
+  </a>
+  <a class="btn btn-default" target="_blank" href="/rnode/<%= host %>/<%= port %>/">
+    <i class="fa fa-code"></i> Connect to VS Code
+  </a>
+  <p class="help-block">
+    This session could not report which editor it started, so both links are
+    shown — use the one matching your choice on the launch form. The other will
+    load blank. (Cause: the <code>proxy</code> key was missing from this
+    session's Secret.)
+  </p>
+<%- end -%>

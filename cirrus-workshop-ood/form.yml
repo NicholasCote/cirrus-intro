@@ -1,0 +1,63 @@
+---
+cluster: "cirrus"
+
+form:
+  - editor
+  - login_shell
+  - working_dir
+  - cpu
+  - memory
+
+attributes:
+  editor:
+    widget: select
+    label: "Editor"
+    help: |
+      Both give you a terminal with the same tools; pick whichever you would
+      rather write files in.
+    options:
+      - ["JupyterLab", "jupyter"]
+      - ["VS Code", "code"]
+
+  login_shell:
+    widget: select
+    label: "Shell"
+    help: |
+      The shell your terminals open with.
+
+      `bash` and `zsh` have tab completion wired up for `kubectl`, `helm`,
+      `argocd` and `stern`, plus `k` as a `kubectl` alias. `tcsh` gets the alias
+      and the environment but no completion — those tools only publish bash and
+      zsh completions.
+    options:
+      - ["bash", "/bin/bash"]
+      - ["zsh", "/bin/zsh"]
+      - ["tcsh", "/bin/tcsh"]
+
+  working_dir:
+    widget: text_field
+    label: "Working directory"
+    value: ""
+    required: false
+    help: |
+      Absolute path the editor opens. Leave blank for `~/cirrus-workshop`, which
+      is created for you and is where the labs expect to put things. Only your
+      home directory is mounted, so this must be a path underneath it.
+
+  cpu:
+    widget: number_field
+    label: "CPUs"
+    min: 1
+    max: 8
+    value: 2
+    step: 1
+    required: true
+
+  memory:
+    widget: number_field
+    label: "Memory (GB)"
+    min: 1
+    max: 32
+    value: 4
+    step: 1
+    required: true

@@ -220,7 +220,7 @@ fi
 cirrus_shell="${CIRRUS_SHELL:-${SHELL:-}}"
 if [ -z "${CIRRUS_SHELL:-}" ]; then
     case "$(basename -- "${cirrus_shell:-none}")" in
-        bash|zsh|fish) ;;
+        bash|zsh|tcsh|csh|fish) ;;
         *) cirrus_shell="" ;;
     esac
 fi
@@ -304,7 +304,27 @@ export CIRRUS_KUBECONFIG_SRC="${CIRRUS_KUBECONFIG_SRC:-$(cirrus-kubeconfig-src)}
 # the ENV defaults in the Dockerfile only exist so the image runs standalone.
 # ---------------------------------------------------------------------------
 PORT="${CIRRUS_PORT:-8080}"
-BASE_URL="${CIRRUS_BASE_URL:-/}"
+BASE_URL="${CIRRUS_BASE_URL:-}"
+
+# Jupyter behind OOD's /node/ proxy has to be told the prefix it lives under, and
+# that prefix is /node/<nodeName>/<nodePort>/ -- neither of which exists until the
+# pod is scheduled and its service assigned a NodePort. So it cannot come from the
+# pod spec; an init container computes it and writes it here, and this reads it.
+#
+# Env wins if set, so local testing stays a one-liner.
+if [ -z "$BASE_URL" ] && [ -n "${CIRRUS_BASE_URL_FILE:-}" ]; then
+    if [ -r "$CIRRUS_BASE_URL_FILE" ]; then
+        # Last path-looking line, not the whole file: the init container appends
+        # to a configmap key, so a seeded comment or a second append would
+        # otherwise be concatenated into a nonsense prefix.
+        BASE_URL="$(grep -oE '^[[:space:]]*/[^[:space:]]*' "$CIRRUS_BASE_URL_FILE" 2>/dev/null | tr -d '[:space:]' | tail -1)"
+        log "base URL read from ${CIRRUS_BASE_URL_FILE}: ${BASE_URL:-<empty>}"
+    else
+        warn "CIRRUS_BASE_URL_FILE=${CIRRUS_BASE_URL_FILE} is not readable."
+        warn "Serving at / instead. Behind OOD's /node/ proxy that yields a blank page,"
+        warn "because every asset request will be sent to a path this server does not serve."
+    fi
+fi
 [ -n "$BASE_URL" ] || BASE_URL="/"
 
 log "mode=${MODE} port=${PORT} base_url=${BASE_URL} workdir=${CIRRUS_WORKDIR}"

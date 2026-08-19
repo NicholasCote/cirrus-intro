@@ -172,10 +172,12 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
         python3 \
         python3-venv \
         rsync \
+        tcsh \
         tree \
         unzip \
         vim \
         wget \
+        zsh \
     && rm -rf /var/lib/apt/lists/*
 
 # Kubernetes tooling and code-server, root-owned and world-executable.
@@ -244,7 +246,47 @@ RUN set -eu; \
     stern --completion bash    > /etc/bash_completion.d/stern; \
     chmod a+r /etc/bash_completion.d/*
 
+RUN set -eu; \
+    mkdir -p /usr/local/share/zsh/site-functions; \
+    kubectl completion zsh > /usr/local/share/zsh/site-functions/_kubectl; \
+    helm completion zsh    > /usr/local/share/zsh/site-functions/_helm; \
+    argocd completion zsh  > /usr/local/share/zsh/site-functions/_argocd; \
+    stern --completion zsh > /usr/local/share/zsh/site-functions/_stern; \
+    chmod a+r /usr/local/share/zsh/site-functions/*
+
 COPY --chmod=0644 etc/profile.d/cirrus.sh /etc/profile.d/cirrus.sh
+COPY --chmod=0644 etc/profile.d/cirrus.csh /etc/profile.d/cirrus.csh
+
+# zsh does not read /etc/profile.d at all. /etc/zsh/zshenv is read by every zsh,
+# so the CIRRUS environment is sourced there (cirrus.sh is POSIX-compatible in
+# everything except its bash-only completion block, which is guarded on
+# BASH_VERSION), and completion is initialised for interactive shells only.
+RUN set -eu; \
+    mkdir -p /etc/zsh; \
+    { \
+      echo '# CIRRUS workshop environment'; \
+      echo 'if [ -r /etc/profile.d/cirrus.sh ]; then emulate sh -c ". /etc/profile.d/cirrus.sh"; fi'; \
+    } >> /etc/zsh/zshenv; \
+    { \
+      echo '# CIRRUS workshop: completion for the workshop tools, plus the k alias'; \
+      echo 'fpath=(/usr/local/share/zsh/site-functions $fpath)'; \
+      echo 'autoload -Uz compinit && compinit -u'; \
+      echo 'alias k=kubectl'; \
+      echo 'compdef k=kubectl'; \
+    } >> /etc/zsh/zshrc
+
+# tcsh gets the environment but not completion: kubectl and friends emit bash and
+# zsh completions only, and hand-writing tcsh `complete` rules for them is a
+# maintenance burden nobody asked for.
+#
+# /etc/csh.cshrc, not /etc/csh.login: cshrc is read by every csh invocation,
+# login or not, and code-server's terminals are non-login. Wiring this into
+# csh.login gave tcsh users in VS Code no CIRRUS environment at all.
+RUN set -eu; \
+    { \
+      echo '# CIRRUS workshop environment (paths and per-session dirs)'; \
+      echo 'if ( -r /etc/profile.d/cirrus.csh ) source /etc/profile.d/cirrus.csh'; \
+    } >> /etc/csh.cshrc
 
 # Jupyter and code-server terminals open interactive non-login shells, which
 # read /etc/bash.bashrc and never /etc/profile.d. cirrus.sh is idempotent and
@@ -309,8 +351,11 @@ RUN set -eu; \
 #
 # CIRRUS_KUBECONFIG_SRC is deliberately not set: it defaults to
 # $HOME/.kube/config, and $HOME is only known at runtime.
+# CIRRUS_BASE_URL is deliberately NOT set here. The entrypoint defaults it to "/"
+# on its own, and an ENV value of "/" is indistinguishable from an operator saying
+# "serve at the root" -- which suppressed CIRRUS_BASE_URL_FILE entirely and left
+# Jupyter serving at / behind a /node/ proxy, i.e. a blank page.
 ENV CIRRUS_PORT=8080 \
-    CIRRUS_BASE_URL=/ \
     CIRRUS_STATE_DIR=/tmp/cirrus \
     KUBECONFIG=/tmp/cirrus/kube/config \
     CIRRUS_JUPYTER_AUTH=none
