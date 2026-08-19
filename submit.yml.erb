@@ -137,32 +137,52 @@ script:
 
       # Tell the view which proxy to build a URL for.
       #
-      # No literal double quote appears below, and that is load-bearing: ood_core
-      # re-emits each element of this array as `- "<element>"`, so a `"` would
-      # close that YAML string early and the whole manifest would fail to parse.
-      # kubectl patch needs JSON, and JSON needs double quotes, so they are built
-      # at runtime from octal 042 -- the same trick the Jupyter app uses with
-      # \047 for single quotes. Single quotes are fine to write literally, which is
-      # why the jsonpath arguments below keep theirs: unquoted, the [0] in
-      # .spec.ports[0] is a glob character class.
+      # `kubectl create ... --dry-run=client -o yaml | kubectl apply -f -` rather
+      # than `kubectl patch`, and that is not a style choice:
       #
-      # `|| true` because a failure here must not cost the user their session: the
-      # view falls back to offering both buttons if the key is missing.
+      #   * A merge patch needs JSON, JSON needs double quotes, and a literal `"`
+      #     cannot appear here -- ood_core re-emits each element of this array into
+      #     its own template as `- "<element>"`, so the quote closes that string and
+      #     the manifest fails to parse. Escaping it survives *two* YAML passes only
+      #     as `\\042` (four backslashes); written with two it arrives as
+      #     `printf '42'`, which is how the first version of this crashlooped.
+      #   * YAML flow mappings avoid quotes but kubectl rejects them here:
+      #     `-p {stringData: {proxy: node}}` gives "error: Invalid JSON Patch".
+      #
+      # --from-literal needs no quoting at all, and apply merges into the existing
+      # Secret rather than replacing it, so the password key survives. This is the
+      # same create|apply idiom /bin/add_line_to_configmap uses.
+      #
+      # Runs in the workshop image, not the utility image: that one ships kubectl
+      # v1.21 against a 1.35 API server, far outside the supported skew.
+      #
+      # `|| true` because a failure here must not cost the user their session --
+      # view.html.erb falls back to offering both buttons.
       - name: "add-proxy-to-secret"
-        image: "<%= utility_img %>"
+        image: "<%= workshop_img %>"
         command:
           - "/bin/bash"
           - "-c"
-          - "D=$(printf '\\042'); kubectl patch secret $(hostname)-secret --type=merge -p {${D}stringData${D}:{${D}proxy${D}:${D}<%= proxy %>${D}}} || true"
+          - "kubectl create secret generic $(hostname)-secret --from-literal=proxy=<%= proxy %> --dry-run=client -o yaml | kubectl apply -f - || true"
 <%- if editor == "jupyter" -%>
 
       # Compute /node/<nodeName>/<nodePort>/ and write it where the container will
       # read it. This cannot be done in the pod spec: the NodePort is assigned when
       # the service is created, and the node name when the pod is scheduled.
+      # Same create|apply idiom, same reason. This replaces the key outright rather
+      # than appending to it, which is what a single-line base URL wants -- and it
+      # needs `get` on pods and services, not `list`. That distinction matters: a
+      # session's own kubectl gets "cannot list resource pods", yet these `get`
+      # calls are what the existing BYO-image Jupyter app already relies on.
+      #
+      # No `|| true` here, unlike the Secret above. A JupyterLab that does not know
+      # its prefix serves at / behind a /node/ proxy, which renders as a blank page
+      # with no error anywhere the user can see. Failing the init container instead
+      # leaves the reason in `kubectl logs <pod> -c add-baseurl-to-cfg`.
       - name: "add-baseurl-to-cfg"
-        image: "<%= utility_img %>"
+        image: "<%= workshop_img %>"
         command:
           - "/bin/bash"
           - "-c"
-          - "PORT_CFG=$(kubectl get services $(hostname)-service -o jsonpath='{.spec.ports[0].nodePort}'); HOST_CFG=$(kubectl get pods $(hostname) -o jsonpath='{.spec.nodeName}'); /bin/add_line_to_configmap /node/${HOST_CFG}/${PORT_CFG}/ <%= base_url_file %>"
+          - "PORT_CFG=$(kubectl get services $(hostname)-service -o jsonpath='{.spec.ports[0].nodePort}'); HOST_CFG=$(kubectl get pods $(hostname) -o jsonpath='{.spec.nodeName}'); kubectl create configmap $(hostname)-configmap --from-literal=<%= base_url_file %>=/node/${HOST_CFG}/${PORT_CFG}/ --dry-run=client -o yaml | kubectl apply -f -"
 <%- end -%>
