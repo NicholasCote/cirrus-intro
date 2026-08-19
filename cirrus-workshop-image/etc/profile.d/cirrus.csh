@@ -38,7 +38,8 @@ if ( ! $?HELM_DATA_HOME )     setenv HELM_DATA_HOME    "${CIRRUS_STATE_DIR}/helm
 
 if ( ! $?KUBECONFIG )         setenv KUBECONFIG        "${CIRRUS_STATE_DIR}/kube/config"
 if ( ! $?CIRRUS_WORKDIR )     setenv CIRRUS_WORKDIR    "${HOME}/cirrus-workshop"
-if ( ! $?JUPYTER_CONFIG_DIR ) setenv JUPYTER_CONFIG_DIR "${CIRRUS_WORKDIR}/.jupyter"
+if ( ! $?CIRRUS_PERSIST_DIR ) setenv CIRRUS_PERSIST_DIR "${HOME}/cirrus-workshop"
+if ( ! $?JUPYTER_CONFIG_DIR ) setenv JUPYTER_CONFIG_DIR "${CIRRUS_PERSIST_DIR}/.jupyter"
 if ( ! $?CIRRUS_KUBECONFIG_SRC ) setenv CIRRUS_KUBECONFIG_SRC `cirrus-kubeconfig-src`
 
 alias k kubectl

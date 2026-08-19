@@ -159,14 +159,34 @@ if ! mkdir -p -- "$CIRRUS_WORKDIR" 2>/dev/null; then
     mkdir -p -- "$CIRRUS_WORKDIR"
 fi
 
-# JUPYTER_CONFIG_DIR is the one Jupyter path that should survive the session:
-# it holds the user's Lab settings and workspace layout. Left at its default it
-# would be $HOME/.jupyter -- a shared dotfile, which is what this image is
-# supposed to stay out of -- so it goes under the workshop directory instead,
-# where it persists without being visible to Casper and Derecho as a dotfile.
-# jupyter_core writes a "migrated" marker into it on the first command, so this
-# has to be set before anything Jupyter-related runs.
-export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_WORKDIR}/.jupyter}"
+# Where workshop state persists. Deliberately NOT derived from CIRRUS_WORKDIR:
+# that is the directory the editor opens, which is a user choice on the launch
+# form, and deriving this from it meant someone who set the working directory to
+# their home turned JUPYTER_CONFIG_DIR into $HOME/.jupyter -- the shared dotfile
+# this image exists to stay out of. Two different concepts, two variables.
+export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/cirrus-workshop}"
+if ! mkdir -p -- "$CIRRUS_PERSIST_DIR" 2>/dev/null; then
+    warn "could not create ${CIRRUS_PERSIST_DIR}; settings will not persist past this session"
+    CIRRUS_PERSIST_DIR="${STATE_DIR}/persist"
+    export CIRRUS_PERSIST_DIR
+    mkdir -p -- "$CIRRUS_PERSIST_DIR"
+fi
+
+# JUPYTER_CONFIG_DIR is the one Jupyter path worth keeping between sessions: it
+# holds the user's Lab settings and workspace layout. jupyter_core writes a
+# "migrated" marker into it on the very first command, so it has to be set before
+# anything Jupyter-related runs.
+export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/.jupyter}"
+
+# Backstop, whoever set it and however: $HOME/.jupyter is read by the user's
+# Casper and Derecho sessions, and a config written by this image can break them.
+# CIRRUS_ALLOW_HOME_JUPYTER=1 for anyone who genuinely wants that.
+if [ "$JUPYTER_CONFIG_DIR" = "${HOME}/.jupyter" ] && [ "${CIRRUS_ALLOW_HOME_JUPYTER:-0}" != "1" ]; then
+    warn "JUPYTER_CONFIG_DIR was \$HOME/.jupyter, which your Casper and Derecho sessions read."
+    warn "Using ${STATE_DIR}/jupyter/config for this session instead (settings will not persist)."
+    warn "Set CIRRUS_ALLOW_HOME_JUPYTER=1 if you really want the shared one."
+    export JUPYTER_CONFIG_DIR="${STATE_DIR}/jupyter/config"
+fi
 mkdir -p -- "$JUPYTER_CONFIG_DIR" 2>/dev/null || \
     warn "could not create ${JUPYTER_CONFIG_DIR}; JupyterLab settings will not persist"
 

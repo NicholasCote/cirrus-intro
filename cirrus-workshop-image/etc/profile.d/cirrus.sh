@@ -60,9 +60,14 @@ export KUBECONFIG="${KUBECONFIG:-${CIRRUS_STATE_DIR}/kube/config}"
 export CIRRUS_KUBECONFIG_SRC="${CIRRUS_KUBECONFIG_SRC:-$(cirrus-kubeconfig-src 2>/dev/null)}"
 export CIRRUS_WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-workshop}"
 
+# Persistence lives here, and it is NOT CIRRUS_WORKDIR: that is whatever
+# directory the editor was told to open, so deriving this from it let a working
+# directory of $HOME turn the next line into $HOME/.jupyter.
+export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/cirrus-workshop}"
+
 # Not /tmp: this one holds the user's JupyterLab settings, which are worth
 # keeping. Just not in $HOME/.jupyter, where the HPC sessions would see it.
-export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_WORKDIR}/.jupyter}"
+export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/.jupyter}"
 
 # ---------------------------------------------------------------------------
 # Completion and the k alias. Bash-only and interactive-only: a completion
