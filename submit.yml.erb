@@ -1,58 +1,20 @@
 <%-
-  # ---------------------------------------------------------------------------
-  # The workshop image. Fixed here, not offered on the form: which container the
-  # labs run in is not a decision an attendee should have to make, and a wrong
-  # answer produces a session that dies instantly.
-  #
-  # Pinned to an explicit tag. CI publishes date tags (%Y-%m-%d.%H.%M); bump this
-  # to the tag you have tested, never to something floating.
-  # ---------------------------------------------------------------------------
+  # -
   workshop_img = "hub.k8s.ucar.edu/ncote/cirrus-workshop:dev-v1.10"
 
-  # Ohio Supercomputer Center's helper image, same one the other CIRRUS OOD apps
-  # use. Provides kubectl plus /bin/save_passwd_as_secret and
-  # /bin/add_line_to_configmap.
   utility_img = "docker.io/ohiosupercomputer/ood-k8s-utils:latest"
 
   user = OodSupport::User.new
   namespace = "ood-#{user.name}"
 
-  # Re-validate the selects rather than trusting them. The form only offers these
-  # values, but submit.yml.erb interpolates them into a pod spec and a shell
-  # command, so a bad value here is a broken manifest at best.
-  #
-  # NEVER assign to a name that is also a form field. Form values arrive as
-  # methods, and `editor = editor.to_s == ...` makes `editor` a local for the whole
-  # scope -- so the right-hand side reads the unassigned local (nil) instead of the
-  # form value, and every VS Code launch silently came up as JupyterLab. Ruby
-  # decides that at parse time, so there is no error to notice. The other CIRRUS
-  # apps avoid it the same way: `image_ref` from `custom_image`, `workdir` from
-  # `working_dir`.
   editor_choice = (editor.to_s == "code") ? "code" : "jupyter"
   shell_path    = %w[/bin/bash /bin/zsh /bin/tcsh].include?(login_shell.to_s) ? login_shell.to_s : "/bin/bash"
 
-  # OOD ships two proxies and they are not interchangeable.
-  #
-  #   /node/HOST/PORT/...   forwards the whole path, prefix included. JupyterLab
-  #                         must therefore be told the prefix it lives under --
-  #                         and that prefix contains the node name and the
-  #                         NodePort, neither of which exists until the pod is
-  #                         scheduled. Hence the init container below.
-  #   /rnode/HOST/PORT/...  strips the prefix. code-server needs this one: it has
-  #                         no base-path setting and emits relative roots.
-  #
-  # view.html.erb has to build the right URL, and it cannot see form values --
-  # only the connection info and the keys of <pod>-secret. So the choice is
-  # written into that Secret below.
   proxy = (editor_choice == "code") ? "rnode" : "node"
 
   workdir = working_dir.to_s.strip
   workdir = "#{user.home}/cirrus-workshop" if workdir.empty?
 
-  # Where the init container drops the computed base URL, and where the container
-  # reads it from. One configmap file, its own mount directory: ood_core emits one
-  # volumeMount per configmap file and two files sharing a mountPath produce
-  # duplicate mountPaths, which the API server rejects outright.
   base_url_file = "base_url"
 -%>
 ---
@@ -63,47 +25,22 @@ script:
     container:
       name: "cirrus-workshop"
       image: "<%= workshop_img %>"
-      # The image's own entrypoint, with the mode as its single argument. Every
-      # token is space-free on purpose: ood_core renders this into the pod's
-      # `command` array by splitting on whitespace, so a quoted argument would not
-      # survive.
       command: "/usr/local/bin/entrypoint.sh <%= editor_choice %>"
       restart_policy: "OnFailure"
-      # Start in the user's GLADE home. The image's own WORKDIR is irrelevant here
-      # and the session runs as the user's real uid, so nothing will cd for us.
       working_dir: "<%= user.home %>"
       env:
         HOME: "<%= user.home %>"
         USER: "<%= user.name %>"
         NB_USER: "<%= user.name %>"
-
-        # OOD knows the authenticated username with certainty; the container does
-        # not. Without this the bootstrap infers ood-<user> from $USER and says
-        # loudly that it guessed.
         CIRRUS_NAMESPACE: "<%= namespace %>"
 
-        # The workshop cluster, by name. The image prefers a context called mlc1
-        # anyway, but saying it here means a kubeconfig with several contexts can
-        # never resolve to the wrong cluster.
         CIRRUS_CONTEXT: "mlc1"
 
-        # Terminals open with the shell chosen on the form. The image validates it
-        # and falls back to bash if it is not installed, rather than handing the
-        # user a session with no working terminal.
         CIRRUS_SHELL: "<%= shell_path %>"
 
         CIRRUS_WORKDIR: "<%= workdir %>"
         CIRRUS_PORT: "8080"
 
-        # Deliberately unset: CIRRUS_KUBECONFIG_SRC.
-        #
-        # Left alone, the image searches ~/.kube/cirrus-config, then
-        # ~/.kube/config, then the kubeconfig baked into the image, and picks the
-        # first that can actually work in a container. Setting it here would turn
-        # a user with no kubeconfig of their own -- the common case -- from a
-        # working session into a hard failure.
-
-        # OOD authenticates the user before the proxy reaches this pod.
         CIRRUS_JUPYTER_AUTH: "none"
 <%- if editor_choice == "jupyter" -%>
 
@@ -122,46 +59,15 @@ script:
 <%- if editor_choice == "jupyter" -%>
     configmap:
       files:
-        # Starts empty; the init container appends the computed base URL. The
-        # container reads it via CIRRUS_BASE_URL_FILE.
         - filename: "<%= base_url_file %>"
           data: |
           mount_path: "/cirrus-baseurl"
 <%- end -%>
     init_containers:
-      # <pod>-secret exists for one reason here: OnDemand's kubernetes adapter
-      # reads that Secret back and exposes every key in it to view.html.erb, which
-      # is the only channel by which the editor choice can reach the Connect
-      # button. The password it generates is unused -- this session is behind the
-      # OOD proxy and both servers run with auth disabled.
       - name: "init-secret"
         image: "<%= utility_img %>"
         command:
           - "/bin/save_passwd_as_secret"
-
-      # Tell the view which proxy to build a URL for.
-      #
-      # `kubectl create ... --dry-run=client -o yaml | kubectl apply -f -` rather
-      # than `kubectl patch`, and that is not a style choice:
-      #
-      #   * A merge patch needs JSON, JSON needs double quotes, and a literal `"`
-      #     cannot appear here -- ood_core re-emits each element of this array into
-      #     its own template as `- "<element>"`, so the quote closes that string and
-      #     the manifest fails to parse. Escaping it survives *two* YAML passes only
-      #     as `\\042` (four backslashes); written with two it arrives as
-      #     `printf '42'`, which is how the first version of this crashlooped.
-      #   * YAML flow mappings avoid quotes but kubectl rejects them here:
-      #     `-p {stringData: {proxy: node}}` gives "error: Invalid JSON Patch".
-      #
-      # --from-literal needs no quoting at all, and apply merges into the existing
-      # Secret rather than replacing it, so the password key survives. This is the
-      # same create|apply idiom /bin/add_line_to_configmap uses.
-      #
-      # Runs in the workshop image, not the utility image: that one ships kubectl
-      # v1.21 against a 1.35 API server, far outside the supported skew.
-      #
-      # `|| true` because a failure here must not cost the user their session --
-      # view.html.erb falls back to offering both buttons.
       - name: "add-proxy-to-secret"
         image: "<%= workshop_img %>"
         command:
@@ -169,20 +75,6 @@ script:
           - "-c"
           - "kubectl create secret generic $(hostname)-secret --from-literal=proxy=<%= proxy %> --dry-run=client -o yaml | kubectl apply -f - || true"
 <%- if editor_choice == "jupyter" -%>
-
-      # Compute /node/<nodeName>/<nodePort>/ and write it where the container will
-      # read it. This cannot be done in the pod spec: the NodePort is assigned when
-      # the service is created, and the node name when the pod is scheduled.
-      # Same create|apply idiom, same reason. This replaces the key outright rather
-      # than appending to it, which is what a single-line base URL wants -- and it
-      # needs `get` on pods and services, not `list`. That distinction matters: a
-      # session's own kubectl gets "cannot list resource pods", yet these `get`
-      # calls are what the existing BYO-image Jupyter app already relies on.
-      #
-      # No `|| true` here, unlike the Secret above. A JupyterLab that does not know
-      # its prefix serves at / behind a /node/ proxy, which renders as a blank page
-      # with no error anywhere the user can see. Failing the init container instead
-      # leaves the reason in `kubectl logs <pod> -c add-baseurl-to-cfg`.
       - name: "add-baseurl-to-cfg"
         image: "<%= workshop_img %>"
         command:
