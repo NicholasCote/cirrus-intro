@@ -17,6 +17,8 @@ info.md.erb             session card: which editor and shell were chosen
 template/               required by Batch Connect; empty, since submit.yml.erb
                         uses the built-in "basic" template
 cirrus-workshop-image/  the image this app launches -- own README, own Dockerfile
+  content/              the workshop text: README.md plus intro/ per lesson
+  tools/                md2ipynb.py -- generates the notebook edition at build
 .github/workflows/      builds and pushes that image to Harbor on a date tag
 ```
 
@@ -76,6 +78,33 @@ working session into a hard failure.
 No `/etc/passwd` configmap either, unlike the other CIRRUS OOD apps: the image
 handles an unknown uid itself with `nss_wrapper`.
 
+## What the session opens
+
+Not an empty file browser. The workshop material lives in the image at
+`/opt/cirrus/content`; the entrypoint installs it as `$CIRRUS_WORKDIR/README.md`
+plus `$CIRRUS_WORKDIR/intro/`, and both editors open that `README.md` — which
+links to the lessons on containers, Kubernetes, Helm, Argo CD, CIRRUS itself and
+troubleshooting.
+
+Each lesson ships in **two editions**: `.md` to read and `.ipynb` to run. The
+Markdown is the source and the notebooks are generated from it at build time, so
+they cannot drift. Notebooks are runnable in both editors — that needed
+`ms-toolsai.jupyter` and `ms-python.python` added to code-server, since its
+built-in notebook support renders but cannot execute.
+
+Nothing about that is in this app's files: the material, the copies, and the two
+editors' "open this file, rendered" settings are all the image's business, and are
+documented in
+[`cirrus-workshop-image/README.md`](cirrus-workshop-image/README.md#the-introduction-material)
+— including why the main page has to be called `README.md` for code-server's sake.
+The one thing worth knowing from here is that it degrades: a read-only `$HOME`, or
+a `README.md` the user already had, costs the main page and nothing else, and
+`cirrus-intro` in a terminal reads the material either way.
+
+`working_dir` on the launch form is where both copies land, since it is where the
+editor opens. Someone who points it at a directory that already has an `intro/`
+or a `README.md` of their own keeps theirs and gets a warning.
+
 ## Assumptions to verify on first launch
 
 Two things are load-bearing and cannot be checked from outside a real session:
@@ -97,4 +126,5 @@ In a session terminal:
 ```bash
 cirrus-check        # 20 checks: kubeconfig, isolation, shell, identity, authorization
 kubectl get pods    # device-code sign-in on the first call, then cached
+cirrus-intro        # the material, if the start page did not open
 ```

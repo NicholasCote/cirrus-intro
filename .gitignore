@@ -1,0 +1,4 @@
+# The notebook edition of the workshop material is generated from the Markdown
+# at image build time by cirrus-workshop-image/tools/md2ipynb.py. Markdown is the
+# source of truth; a committed notebook would only be a copy that can go stale.
+cirrus-workshop-image/content/intro/*.ipynb

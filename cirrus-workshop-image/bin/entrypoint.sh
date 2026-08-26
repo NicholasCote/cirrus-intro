@@ -232,6 +232,159 @@ mkdir -p -- "$JUPYTER_CONFIG_DIR" 2>/dev/null || \
     warn "could not create ${JUPYTER_CONFIG_DIR}; JupyterLab settings will not persist"
 
 # ---------------------------------------------------------------------------
+# Introduction content.
+#
+# The material is Markdown because Markdown is the one format that renders in
+# both editors -- code-server here has no Jupyter extension, so a notebook would
+# be a JupyterLab-only document. It ships in the image and is copied into the
+# working directory at startup, because Jupyter serves nothing outside its
+# root_dir (which is CIRRUS_WORKDIR) and so cannot reach /opt/cirrus/content.
+#
+# Two targets, because the two editors open a file by different means:
+#
+#   $CIRRUS_WORKDIR/$CIRRUS_START_PAGE  the main page. Named README.md so that
+#                                      code-server's workbench.startupEditor
+#                                      "readme" opens it -- code-server cannot
+#                                      be told to open an arbitrary file (see
+#                                      the code branch below), and that setting
+#                                      is the one thing that reliably can.
+#   $CIRRUS_CONTENT_DIR                the pages it links to.
+# ---------------------------------------------------------------------------
+CIRRUS_CONTENT_SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
+CIRRUS_CONTENT_DIR="${CIRRUS_CONTENT_DIR:-${CIRRUS_WORKDIR}/intro}"
+# Relative to CIRRUS_WORKDIR, because that is what both editors need it as.
+CIRRUS_START_PAGE="${CIRRUS_START_PAGE:-README.md}"
+export CIRRUS_CONTENT_SRC CIRRUS_CONTENT_DIR CIRRUS_START_PAGE
+
+# Absolute path of the main page once installed, or empty for "do not open one".
+START_PAGE_PATH=""
+
+# How the copies are recognised as ours on the next launch. The directory gets a
+# stamp file, which ships inside the content so a successful copy always brings
+# it along; the main page gets a marker on its first line, since a single file
+# has nowhere to put a stamp beside it.
+CIRRUS_CONTENT_STAMP=".cirrus-content"
+CIRRUS_CONTENT_MARKER="cirrus-content:"
+
+seed_intro_pages() {
+    if [ ! -d "${CIRRUS_CONTENT_SRC}/intro" ]; then
+        warn "no introduction pages at ${CIRRUS_CONTENT_SRC}/intro"
+        return 1
+    fi
+
+    # A directory of that name with no stamp in it was made by the user, not by
+    # a previous launch of this image. Removing it would be destroying their
+    # work to install ours, so it is left alone and said out loud.
+    if [ -e "$CIRRUS_CONTENT_DIR" ] && [ ! -e "${CIRRUS_CONTENT_DIR}/${CIRRUS_CONTENT_STAMP}" ]; then
+        warn "${CIRRUS_CONTENT_DIR} exists but has no ${CIRRUS_CONTENT_STAMP} in it, so it was"
+        warn "not created by this image -- leaving it untouched. The pages are still"
+        warn "readable at ${CIRRUS_CONTENT_SRC}; 'cirrus-intro' finds them there."
+        return 1
+    fi
+
+    mkdir -p -- "$(dirname -- "$CIRRUS_CONTENT_DIR")" 2>/dev/null || true
+
+    # Built beside the live directory and swapped in, rather than replaced in
+    # place. The staging copy is what makes it possible to carry a notebook the
+    # user has run across the refresh -- see below -- without ever leaving the
+    # directory half-updated if something fails partway.
+    local staged="${CIRRUS_CONTENT_DIR}.new"
+    rm -rf -- "$staged" 2>/dev/null || true
+    if ! cp -a -- "${CIRRUS_CONTENT_SRC}/intro" "$staged" 2>/dev/null; then
+        warn "could not stage the introduction pages at ${staged}"
+        warn "(is ${CIRRUS_WORKDIR} writable?). Read them with 'cirrus-intro' instead."
+        rm -rf -- "$staged" 2>/dev/null || true
+        return 1
+    fi
+
+    # The Markdown edition is derived state and is replaced outright: a merge
+    # would leave last month's page behind after it is renamed upstream.
+    #
+    # The notebook edition cannot be treated that way, because running a
+    # notebook *modifies* it -- execution counts and outputs -- so replacing it
+    # every launch would throw away the work of anyone who came back to finish a
+    # page. Instead each existing notebook is compared against the pristine copy
+    # the image shipped: byte-identical means untouched, so it takes the new
+    # version; different means the user ran or edited it, so theirs is kept.
+    # That way corrections still reach anyone who has not started a page, and
+    # nobody loses a page they have.
+    local kept=""
+    if [ -d "$CIRRUS_CONTENT_DIR" ]; then
+        local nb base pristine
+        for nb in "$CIRRUS_CONTENT_DIR"/*.ipynb; do
+            [ -f "$nb" ] || continue
+            base="$(basename -- "$nb")"
+            pristine="${CIRRUS_CONTENT_SRC}/intro/${base}"
+            if [ -f "$pristine" ] && cmp -s -- "$nb" "$pristine"; then
+                continue                      # never opened; let the fresh one win
+            fi
+            cp -f -- "$nb" "${staged}/${base}" 2>/dev/null && kept="${kept} ${base}"
+        done
+    fi
+
+    rm -rf -- "$CIRRUS_CONTENT_DIR" 2>/dev/null || \
+        warn "could not remove ${CIRRUS_CONTENT_DIR}; its pages may be out of date"
+    if ! mv -- "$staged" "$CIRRUS_CONTENT_DIR" 2>/dev/null; then
+        warn "could not move ${staged} into place as ${CIRRUS_CONTENT_DIR}"
+        return 1
+    fi
+
+    # Markdown read-only, notebooks not. A read-only page means an editor
+    # refuses to save over it rather than accepting an edit the next launch
+    # would discard; a notebook has to be saveable to be runnable at all, and
+    # the comparison above is what protects it instead. Directories stay
+    # writable either way, since the next launch has to be able to replace them.
+    find "$CIRRUS_CONTENT_DIR" -type d -exec chmod 0755 {} + 2>/dev/null || true
+    find "$CIRRUS_CONTENT_DIR" -type f -exec chmod 0444 {} + 2>/dev/null || true
+    find "$CIRRUS_CONTENT_DIR" -type f -name '*.ipynb' -exec chmod 0644 {} + 2>/dev/null || true
+
+    if [ -n "$kept" ]; then
+        log "kept your own copy of:${kept}"
+        log "  (the pristine notebooks are always at ${CIRRUS_CONTENT_SRC}/intro)"
+    fi
+    return 0
+}
+
+seed_start_page() {
+    local src="${CIRRUS_CONTENT_SRC}/${CIRRUS_START_PAGE}"
+    local dst="${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}"
+
+    [ -f "$src" ] || { warn "no main page at ${src}"; return 1; }
+
+    # This one lands at the root of a directory the user chose, so it is only
+    # ever overwritten when the file already there is one of ours. The marker is
+    # an HTML comment on the first line: invisible in a rendered view, and
+    # unambiguous enough that a file the user wrote cannot be mistaken for it.
+    if [ -e "$dst" ] && ! head -1 -- "$dst" 2>/dev/null | grep -qF -- "$CIRRUS_CONTENT_MARKER"; then
+        warn "${dst} already exists and is not one of ours, so it is left alone."
+        warn "The main page is readable at ${src}, or run 'cirrus-intro'."
+        return 1
+    fi
+
+    # cp -f, not cp: the previous launch left it mode 0444.
+    if ! cp -f -- "$src" "$dst" 2>/dev/null; then
+        warn "could not install the main page at ${dst} (is ${CIRRUS_WORKDIR} writable?)"
+        return 1
+    fi
+    chmod 0444 -- "$dst" 2>/dev/null || true
+    START_PAGE_PATH="$dst"
+    return 0
+}
+
+if [ "${CIRRUS_SEED_CONTENT:-1}" = "0" ]; then
+    log "CIRRUS_SEED_CONTENT=0: leaving ${CIRRUS_CONTENT_DIR} and the main page as they are"
+    [ -f "${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}" ] && START_PAGE_PATH="${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}"
+else
+    seed_intro_pages || true
+    seed_start_page  || true
+fi
+
+if [ -z "$START_PAGE_PATH" ]; then
+    warn "no main page in ${CIRRUS_WORKDIR}; the editor will open it with nothing"
+    warn "selected. 'cirrus-intro' reads the material from a terminal either way."
+fi
+
+# ---------------------------------------------------------------------------
 # kubeconfig. A failure here is loud but not fatal: a session that refuses to
 # start is a crashloop the user cannot read, while a session that starts with a
 # broken kubeconfig shows them the error in a terminal and lets them re-run
@@ -400,6 +553,7 @@ fi
 [ -n "$BASE_URL" ] || BASE_URL="/"
 
 log "mode=${MODE} port=${PORT} base_url=${BASE_URL} workdir=${CIRRUS_WORKDIR}"
+log "start page: ${START_PAGE_PATH:-<none>}"
 
 # ===========================================================================
 # Servers
@@ -414,6 +568,8 @@ bootstrap)
     log "  HOME               : ${HOME}"
     log "  CIRRUS_STATE_DIR   : ${STATE_DIR}"
     log "  CIRRUS_WORKDIR     : ${CIRRUS_WORKDIR}"
+    log "  CIRRUS_CONTENT_DIR : ${CIRRUS_CONTENT_DIR}"
+    log "  start page         : ${START_PAGE_PATH:-<none>}"
     log "  KUBECONFIG         : ${KUBECONFIG}"
     log "  user               : $(id -un 2>/dev/null || echo '<no passwd entry>') (uid $(id -u), gid $(id -g))"
     exit 0
@@ -463,6 +619,27 @@ jupyter)
             ;;
     esac
 
+    # Open the start page instead of an empty file browser. default_url is a
+    # path under base_url, and /lab/tree/<p> resolves <p> against root_dir --
+    # which is CIRRUS_WORKDIR. A start page outside the workdir cannot be served
+    # at all, so it is dropped rather than turned into a 404 on first load.
+    #
+    # It opens *rendered* because the image ships a defaultViewers override
+    # pointing markdown at "Markdown Preview"; see the Dockerfile.
+    if [ -n "$START_PAGE_PATH" ]; then
+        case "$START_PAGE_PATH" in
+            "${CIRRUS_WORKDIR}"/*)
+                start_rel="${START_PAGE_PATH#"${CIRRUS_WORKDIR}"/}"
+                args+=( --LabApp.default_url="/lab/tree/${start_rel}" )
+                log "JupyterLab will open ${start_rel}"
+                ;;
+            *)
+                warn "main page ${START_PAGE_PATH} is outside ${CIRRUS_WORKDIR},"
+                warn "which is JupyterLab's root_dir, so it cannot be opened."
+                ;;
+        esac
+    fi
+
     exec jupyter lab "${args[@]}"
     ;;
 
@@ -500,6 +677,11 @@ code)
         mkdir -p -- "$(dirname -- "$USER_SETTINGS")"
         cat > "$USER_SETTINGS" <<'SETTINGS'
 {
+  "workbench.startupEditor": "STARTUP_EDITOR",
+  "workbench.editorAssociations": {
+    "INTRO_GLOB": "vscode.markdown.preview.editor",
+    "START_PAGE_GLOB": "vscode.markdown.preview.editor"
+  },
   "files.exclude": {
     "**/.*": true,
     "**/.github": false,
@@ -521,10 +703,32 @@ code)
     "**/.local": true,
     "**/node_modules": true
   },
+  "python.defaultInterpreterPath": "/opt/venv/bin/python3",
+  "jupyter.askForKernelRestart": false,
   "search.followSymlinks": false,
   "telemetry.telemetryLevel": "off"
 }
 SETTINGS
+        # Substituted rather than written into the heredoc, which stays quoted so
+        # that nothing else in the JSON is expanded.
+        #
+        # The two globs make the material open in the Markdown preview -- the
+        # equivalent of JupyterLab's defaultViewers override -- and are scoped by
+        # path so that Markdown the user writes still opens as text. VS Code
+        # matches a pattern containing a slash against the whole path.
+        #
+        # "readme" is what opens the main page on launch. It is not a nicety: a
+        # file passed to code-server positionally is *discarded*, and takes the
+        # folder with it (routes/vscode.js keeps only the last positional entry,
+        # and uses it only if it is a directory or a .code-workspace). Naming the
+        # main page README.md and letting this setting find it is the one route
+        # that works. It falls back to the welcome page if there is no readme, so
+        # it is only set when one was actually installed.
+        sed -i \
+            -e "s|INTRO_GLOB|**/$(basename -- "$CIRRUS_CONTENT_DIR")/*.md|" \
+            -e "s|START_PAGE_GLOB|**/$(basename -- "$CIRRUS_WORKDIR")/${CIRRUS_START_PAGE}|" \
+            -e "s|STARTUP_EDITOR|$([ -n "$START_PAGE_PATH" ] && echo readme || echo none)|" \
+            "$USER_SETTINGS"
         log "seeded VS Code settings at ${USER_SETTINGS} (dotfiles hidden, as in JupyterLab)"
     fi
 
@@ -540,6 +744,15 @@ SETTINGS
     )
     if [ "$BASE_URL" != "/" ]; then
         args+=(--abs-proxy-base-path "$BASE_URL")
+    fi
+
+    # The folder, and *only* the folder. Adding the main page here would be the
+    # obvious thing and is actively wrong: code-server resolves the last
+    # positional entry alone, and ignores it unless it is a directory or a
+    # .code-workspace -- so a trailing file leaves the session with no folder
+    # open at all. The main page is opened by workbench.startupEditor instead.
+    if [ -n "$START_PAGE_PATH" ]; then
+        log "VS Code will open ${CIRRUS_START_PAGE} as the folder's readme"
     fi
 
     exec /opt/code-server/bin/code-server "${args[@]}" "$CIRRUS_WORKDIR"

@@ -38,6 +38,11 @@ if ( ! $?HELM_DATA_HOME )     setenv HELM_DATA_HOME    "${CIRRUS_STATE_DIR}/helm
 
 if ( ! $?KUBECONFIG )         setenv KUBECONFIG        "${CIRRUS_STATE_DIR}/kube/config"
 if ( ! $?CIRRUS_WORKDIR )     setenv CIRRUS_WORKDIR    "${HOME}/cirrus-workshop"
+
+# The introduction pages -- see cirrus.sh. cirrus-intro reads these.
+if ( ! $?CIRRUS_CONTENT_SRC ) setenv CIRRUS_CONTENT_SRC /opt/cirrus/content
+if ( ! $?CIRRUS_CONTENT_DIR ) setenv CIRRUS_CONTENT_DIR  "${CIRRUS_WORKDIR}/intro"
+if ( ! $?CIRRUS_START_PAGE )  setenv CIRRUS_START_PAGE   README.md
 if ( ! $?CIRRUS_PERSIST_DIR ) setenv CIRRUS_PERSIST_DIR "${HOME}/cirrus-workshop"
 if ( ! $?JUPYTER_CONFIG_DIR ) setenv JUPYTER_CONFIG_DIR "${CIRRUS_PERSIST_DIR}/.jupyter"
 if ( ! $?CIRRUS_KUBECONFIG_SRC ) setenv CIRRUS_KUBECONFIG_SRC `cirrus-kubeconfig-src`

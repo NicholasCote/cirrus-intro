@@ -62,6 +62,19 @@ ARG REQUESTS_VERSION=2.34.2
 ARG EXT_YAML_VERSION=1.25.2026081408
 ARG EXT_K8S_VERSION=1.4.1
 
+# Notebook support for code-server, so the .ipynb edition of the material is
+# runnable in VS Code and not just in JupyterLab. ms-toolsai.jupyter is the
+# kernel provider -- code-server's built-in `ipynb` extension only renders
+# notebooks, it cannot execute a cell. ms-python.python comes with it because
+# without an interpreter provider the Jupyter extension has no reliable way to
+# discover the kernelspec in /opt/venv.
+#
+# Both are on Open VSX, which is the only marketplace code-server can use.
+# These two are the reason to re-check image size after a bump; if the workshop
+# settles on the Markdown edition, they are the first thing to drop.
+ARG EXT_JUPYTER_VERSION=2025.9.1
+ARG EXT_PYTHON_VERSION=2026.4.0
+
 # ==========================================================================
 # tools -- download and unpack every pinned binary in one throwaway stage so
 # the runtime image never carries the archives.
@@ -148,6 +161,8 @@ ARG KUBERNETES_PY_VERSION
 ARG REQUESTS_VERSION
 ARG EXT_YAML_VERSION
 ARG EXT_K8S_VERSION
+ARG EXT_JUPYTER_VERSION
+ARG EXT_PYTHON_VERSION
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
@@ -229,9 +244,40 @@ RUN set -eu; \
         --extensions-dir "${CIRRUS_SYS_EXTENSIONS_DIR}" \
         --disable-telemetry --disable-update-check \
         --install-extension "redhat.vscode-yaml@${EXT_YAML_VERSION}" \
-        --install-extension "ms-kubernetes-tools.vscode-kubernetes-tools@${EXT_K8S_VERSION}"; \
+        --install-extension "ms-kubernetes-tools.vscode-kubernetes-tools@${EXT_K8S_VERSION}" \
+        --install-extension "ms-python.python@${EXT_PYTHON_VERSION}" \
+        --install-extension "ms-toolsai.jupyter@${EXT_JUPYTER_VERSION}"; \
     rm -rf /tmp/build-code-user-data; \
     chmod -R a+rX "${CIRRUS_SYS_EXTENSIONS_DIR}"
+
+# --------------------------------------------------------------------------
+# JupyterLab settings shipped with the image.
+#
+# The introduction material is Markdown, and Markdown is the one format that
+# renders in *both* editors -- a notebook would only work in JupyterLab, since
+# code-server here has no Jupyter extension. But JupyterLab's default viewer for
+# .md is the plain text editor, so without this the start page opens as source
+# and the links between pages are not clickable.
+#
+# overrides.json under <sys-prefix>/share/jupyter/lab/settings is the
+# system-wide settings layer: it applies to every user, needs no writable
+# JUPYTER_CONFIG_DIR, and is still overridable per-user from the Settings
+# editor. A user who wants to edit a page can still right-click -> Open With ->
+# Editor.
+#
+# printf rather than a heredoc: a RUN heredoc needs a `# syntax=` frontend
+# directive, and this image deliberately does not pin one.
+# --------------------------------------------------------------------------
+RUN set -eu; \
+    mkdir -p /opt/venv/share/jupyter/lab/settings; \
+    printf '%s\n' \
+      '{' \
+      '  "@jupyterlab/docmanager-extension:plugin": {' \
+      '    "defaultViewers": { "markdown": "Markdown Preview" }' \
+      '  }' \
+      '}' \
+      > /opt/venv/share/jupyter/lab/settings/overrides.json; \
+    chmod 0444 /opt/venv/share/jupyter/lab/settings/overrides.json
 
 # --------------------------------------------------------------------------
 # Shell completion. Generated at build time into /etc/bash_completion.d so a
@@ -301,6 +347,35 @@ COPY --chmod=0755 bin/ /usr/local/bin/
 COPY --chmod=0444 etc/cirrus/kubeconfig.yaml /opt/cirrus/kubeconfig.yaml
 
 # --------------------------------------------------------------------------
+# The introduction material. Shipped in the image, not fetched at runtime, so
+# the pages and the tool versions they describe are one artifact: a session that
+# worked at the last workshop shows the same material at the next one.
+#
+# The entrypoint copies this into the user's working directory at startup,
+# read-only, and replaces it every launch -- see seed_intro_content() there for
+# why that is safe. /opt/cirrus/content stays the authority; nothing writes here.
+#
+# --chmod is not used on the COPY: it applies to directories as well as files,
+# and a 0444 directory cannot be traversed.
+# --------------------------------------------------------------------------
+COPY content/ /opt/cirrus/content/
+
+# The notebook edition, generated from the Markdown rather than maintained
+# alongside it. Two hand-written copies of the same lesson drift within a week;
+# a build artifact cannot. See tools/md2ipynb.py for the conversion rules and
+# for the fence directives that let one source serve both editions.
+#
+# Notebooks are 0644 and Markdown is 0444 -- a notebook you are meant to execute
+# has to be saveable. The entrypoint is what keeps that from meaning "silently
+# replaced next launch"; see seed_intro_pages() there.
+COPY --chmod=0755 tools/md2ipynb.py /opt/cirrus/bin/md2ipynb.py
+RUN set -eu; \
+    python3 /opt/cirrus/bin/md2ipynb.py /opt/cirrus/content/intro /opt/cirrus/content/intro; \
+    find /opt/cirrus/content -type d -exec chmod 0755 {} +; \
+    find /opt/cirrus/content -type f -exec chmod 0444 {} +; \
+    find /opt/cirrus/content -type f -name '*.ipynb' -exec chmod 0644 {} +
+
+# --------------------------------------------------------------------------
 # Resolved versions, recorded once at build time. cirrus-versions prints this
 # file; `cirrus-versions --check` re-runs each binary and diffs against it.
 # --------------------------------------------------------------------------
@@ -325,6 +400,8 @@ RUN set -eu; \
       printf 'requests\t%s\n'     "${REQUESTS_VERSION}"; \
       printf 'ext:redhat.vscode-yaml\t%s\n' "${EXT_YAML_VERSION}"; \
       printf 'ext:ms-kubernetes-tools.vscode-kubernetes-tools\t%s\n' "${EXT_K8S_VERSION}"; \
+      printf 'ext:ms-python.python\t%s\n' "${EXT_PYTHON_VERSION}"; \
+      printf 'ext:ms-toolsai.jupyter\t%s\n' "${EXT_JUPYTER_VERSION}"; \
     } > /opt/cirrus/versions.txt; \
     lib="$(ldconfig -p | awk -F'=> ' '/libnss_wrapper/ {print $2; exit}' | tr -d ' ')"; \
     if [ -z "$lib" ] || [ ! -r "$lib" ]; then \
@@ -355,10 +432,18 @@ RUN set -eu; \
 # on its own, and an ENV value of "/" is indistinguishable from an operator saying
 # "serve at the root" -- which suppressed CIRRUS_BASE_URL_FILE entirely and left
 # Jupyter serving at / behind a /node/ proxy, i.e. a blank page.
+# CIRRUS_CONTENT_SRC is the image's own copy of the introduction material.
+# CIRRUS_START_PAGE is the main page, relative to CIRRUS_WORKDIR, and is README.md
+# because that is the only filename code-server can be made to open on launch --
+# see the code branch of the entrypoint. CIRRUS_CONTENT_DIR is deliberately not
+# set here: it defaults to $CIRRUS_WORKDIR/intro, and CIRRUS_WORKDIR is only
+# known at runtime.
 ENV CIRRUS_PORT=8080 \
     CIRRUS_STATE_DIR=/tmp/cirrus \
     KUBECONFIG=/tmp/cirrus/kube/config \
-    CIRRUS_JUPYTER_AUTH=none
+    CIRRUS_JUPYTER_AUTH=none \
+    CIRRUS_CONTENT_SRC=/opt/cirrus/content \
+    CIRRUS_START_PAGE=README.md
 
 EXPOSE 8080
 

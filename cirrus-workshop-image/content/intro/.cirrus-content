@@ -1,0 +1,18 @@
+This directory holds the introduction pages shipped inside the CIRRUS workshop
+image, copied here at session startup. The main page is the README.md in the
+directory above this one, installed the same way.
+
+BOTH ARE REBUILT FROM THE IMAGE EVERY TIME A SESSION STARTS. Anything you add or
+change in here is lost at the next launch, and the files themselves are mode
+0444 so that an editor refuses to save over them rather than letting you lose
+an edit silently.
+
+That is deliberate: it is what makes corrections to the material arrive without
+anyone re-copying anything.
+
+Your own work goes in the parent directory -- ~/cirrus-workshop -- which is on
+your GLADE home and persists.
+
+The entrypoint checks for this file before replacing the directory. A directory
+of the same name WITHOUT this file is assumed to be yours and is left alone; the
+main page is guarded the same way, by a marker comment on its first line.

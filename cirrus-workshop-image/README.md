@@ -28,11 +28,14 @@ against it.
 | argocd | v3.5.1 | Argo CD (GitOps). The `argo` CLI is a *different* project — Argo Workflows — and is not shipped; see below |
 | stern | v1.34.0 | multi-pod log tailing |
 | yq | v4.53.3 | mikefarah |
-| code-server | 4.133.0 | with `redhat.vscode-yaml` and `ms-kubernetes-tools.vscode-kubernetes-tools` pre-installed from Open VSX |
+| code-server | 4.133.0 | with `redhat.vscode-yaml`, `ms-kubernetes-tools.vscode-kubernetes-tools`, `ms-python.python` and `ms-toolsai.jupyter` pre-installed from Open VSX |
 | JupyterLab | 4.6.3 | plus `notebook`, `jupyterlab-git`, `ipykernel`, `pyyaml`, `kubernetes`, `requests` in `/opt/venv` |
 
 Plus `git`, `curl`, `wget`, `jq`, `vim`, `nano`, `less`, `bash-completion`,
 `openssh-client`, `unzip`, `tree`, `rsync`.
+
+Plus the workshop material itself, at `/opt/cirrus/content` — see *The
+introduction material* below.
 
 ### What is deliberately not here
 
@@ -96,6 +99,10 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_TOKEN_CACHE_DIR` | `$CIRRUS_STATE_DIR/kube/token-cache` | where the session's bearer token is cached |
 | `CIRRUS_KUBECTL_TIMEOUT` | `300s` | `cirrus-check`'s API timeout; long enough for a human to complete a device-code sign-in |
 | `CIRRUS_EXTENSIONS_DIR` | `$CIRRUS_STATE_DIR/code-server/extensions` | |
+| `CIRRUS_CONTENT_SRC` | `/opt/cirrus/content` | the image's copy of the introduction material |
+| `CIRRUS_CONTENT_DIR` | `$CIRRUS_WORKDIR/intro` | where the topic pages are copied to at startup |
+| `CIRRUS_START_PAGE` | `README.md` | the main page, relative to `CIRRUS_WORKDIR` |
+| `CIRRUS_SEED_CONTENT` | `1` | `0` leaves both copies completely alone |
 
 `CIRRUS_KUBECONFIG_SRC` has no `ENV` default in the Dockerfile because it
 depends on `$HOME`, which is only known at runtime; the scripts default it.
@@ -253,6 +260,200 @@ To try it:
    synthesized `/etc/passwd`, so the lookup resolves and `ood-<user>` comes out
    right. Set it explicitly for the dedicated apps.
 
+## The introduction material
+
+`content/` in this directory is the workshop text: a main page (`README.md`) and
+`intro/` with one page each for containers, Kubernetes, Helm, Argo CD, CIRRUS
+itself, and troubleshooting. It is baked into the image at `/opt/cirrus/content`,
+so the pages and the tool versions they describe ship as one artifact.
+
+### Two editions, one source
+
+Every lesson ships twice: `NN-name.md` to read and `NN-name.ipynb` to run. The
+Markdown is the source of truth and the notebooks are **generated from it at
+image build time** by `tools/md2ipynb.py`. That is the whole point of the
+arrangement — two hand-maintained copies of the same lesson drift within a week,
+and a build artifact cannot. It also makes settling on one edition cheap: stop
+generating, or stop shipping the `.md`, and nothing has to be reconciled.
+
+`99-troubleshooting.md` has no notebook edition. It is a lookup table, not a
+walkthrough, and a notebook of it would only be a worse way to read it.
+
+Markdown is the right source because it renders in **both** editors with no
+extension at all. Notebooks needed something added: code-server's built-in
+`ipynb` extension only *renders* a notebook, so `ms-toolsai.jupyter` (the kernel
+provider) and `ms-python.python` (which is how it finds the kernelspec in
+`/opt/venv`) are installed from Open VSX alongside the YAML and Kubernetes ones.
+They are pinned like everything else and recorded in `versions.txt`.
+
+Those two pull in six more as dependencies (`debugpy`, `vscode-python-envs`,
+`jupyter-renderers`, `jupyter-keymap`, `cell-tags`, `slideshow`) and cost about
+**112 MB** of the 124 MB extension directory — against 224 KB for the material
+itself. **If the workshop settles on the Markdown edition, those two `ARG`s and
+their `--install-extension` lines are the first thing to drop.** Worth watching
+on the next CI run: the Trivy gate is CRITICAL-only, and this much new
+`node_modules` is the most likely thing to trip it.
+
+Neither editor renders Markdown by default, so both still need a nudge; see
+*How the main page opens*.
+
+### How the notebooks are generated
+
+`tools/md2ipynb.py`, run from the Dockerfile. Prose becomes Markdown cells split
+at headings; ` ```bash ` fences become code cells; every other fence stays inside
+the prose, because a manifest or a Dockerfile is an illustration rather than
+something to run.
+
+Three decisions in there are worth knowing about, because each one is a bug that
+was found by running the output rather than reading it:
+
+**Shell cells use `%%bash`, not `!command` per line.** The pages are full of
+heredocs (`cat > pod.yaml <<'EOF' … EOF`), and a heredoc cannot survive being
+split into `!` lines.
+
+**A generated setup cell carries the state that `%%bash` cannot.** Each `%%bash`
+cell is its own subshell, so `IMG=…` in one cell is gone in the next and `cd`
+never persists. The setup cell sets the working directory and `$IMG` in the
+*kernel* instead — via `os.chdir()` and `os.environ` — and every `%%bash`
+subprocess inherits both. Verified: a heredoc written in one cell is readable
+from the next, with `$IMG` expanded.
+
+**The setup cell's `kubectl` call is bounded, and that is not a nicety.** With a
+cold token cache `kubectl` starts a device-code sign-in, and that prompt has
+nowhere to appear inside a kernel. Unbounded, the *first cell of every notebook*
+hangs forever. It now times out in 20s and prints the instruction to sign in from
+a terminal and re-run. This is the same constraint that makes the notebooks a
+terminal-first experience no matter what, and it is called out in each notebook's
+preamble.
+
+**Fence directives** let one source serve both editions. They are extra words in
+the info string, which Markdown renderers ignore, so they are invisible in the
+`.md`:
+
+| directive | effect on the notebook |
+| --- | --- |
+| ` ```bash notebook-skip ` | stays a fenced block instead of a runnable cell — an interactive shell, an endless reconcile loop, a reference list full of `<placeholders>` |
+| ` ```bash notebook-timeout=N ` | wrapped in `timeout N`, so a `-w` watch shows what it is meant to show and then ends instead of hanging the kernel |
+
+Six blocks across the five lessons carry one of these. If you add a page, the
+check to run is "would every cell terminate on its own" — and the way to answer
+it is to execute the notebook, not to read it:
+
+```bash
+jupyter nbconvert --to notebook --execute --allow-errors \
+  --ExecutePreprocessor.timeout=120 --output-dir /tmp --output done.ipynb \
+  /opt/cirrus/content/intro/01-containers.ipynb
+```
+
+### Why it is copied into the working directory
+
+JupyterLab serves nothing outside `ServerApp.root_dir`, which is
+`CIRRUS_WORKDIR`. So `/opt/cirrus/content` is unreachable from the file browser
+however it is configured, and the pages have to exist under the working
+directory. A symlink was the other option and was rejected: it reads as a broken
+link when the user looks at the same GLADE home from Casper.
+
+Both copies are **replaced at every launch**, which is how a correction to the
+material reaches attendees without anyone re-copying anything. Four things make
+that safe rather than destructive:
+
+* The files are written mode `0444`. An editor refuses to save over a page
+  instead of accepting an edit the next launch would silently discard.
+  Directories stay `0755`, because the next launch has to be able to remove them.
+* `content/intro/.cirrus-content` ships *inside* the content, so a successful copy
+  always brings the stamp along. `seed_intro_pages()` refuses to touch a
+  `CIRRUS_CONTENT_DIR` that exists *without* that stamp — that is a directory the
+  user made, and removing it to install ours would be destroying their work.
+* The main page lands at the root of a directory the *user* chose on the form, so
+  it gets its own guard: `seed_start_page()` overwrites `README.md` only when the
+  file already there carries `cirrus-content:` on its first line. That is an HTML
+  comment — invisible rendered, and unmistakable in a file the user wrote.
+* **Notebooks are the exception, because running one modifies it.** Execution
+  counts and outputs are written back into the `.ipynb`, so replacing them every
+  launch would discard the work of anyone returning to finish a lesson. They ship
+  `0644` rather than `0444`, and `seed_intro_pages()` compares each existing
+  notebook against the pristine copy in the image: byte-identical means it was
+  never opened, so the new version wins; different means the user ran it, so
+  theirs is kept and the fact is logged. Corrections still reach anyone who has
+  not started, and nobody loses a lesson they have.
+
+The directory is staged as `intro.new` and moved into place rather than being
+overwritten, so a failure partway cannot leave it half-updated — and so the
+notebook carry-over above has somewhere to happen before the swap.
+
+Every failure here degrades: a read-only `$HOME`, a missing content directory, a
+`README.md` of the user's own, or `CIRRUS_SEED_CONTENT=0` costs the main page and
+nothing else. The session starts either way.
+
+### How the main page opens
+
+Both editors need two things: a default *viewer* for Markdown, and the file to
+open on launch.
+
+| | rendered by default | opened on launch |
+| --- | --- | --- |
+| JupyterLab | `overrides.json` under `/opt/venv/share/jupyter/lab/settings` points `defaultViewers` for `markdown` at `Markdown Preview` | `--LabApp.default_url=/lab/tree/<path>`, the path relative to `root_dir` |
+| code-server | `workbench.editorAssociations` maps the material's paths to `vscode.markdown.preview.editor`, in the settings the entrypoint seeds | `workbench.startupEditor: readme` |
+
+### Why the main page is called README.md
+
+Because that is the only filename code-server can be made to open, and this is
+worth writing down since the obvious approach is wrong in a way that costs you
+the whole session's folder.
+
+`code-server [flags] <path>...` looks like it takes a list. It does not.
+`out/node/routes/vscode.js` resolves **only the last positional entry**, and uses
+it only if it is a directory (→ `folder`) or a `.code-workspace` (→ `workspace`).
+A trailing *regular file* matches neither branch, so the redirect is skipped
+entirely and the session opens with **no folder at all** — the file is not opened
+and the working directory is lost with it. There is no `--open-file` flag; the
+`payload=[["openFile",…]]` query parameter exists but only folder and workspace
+survive code-server's redirect, so it cannot be reached from the CLI.
+
+What does work is `workbench.startupEditor: "readme"`, which opens a readme from
+the root of the opened folder, in preview. Hence: the main page is the working
+directory's `README.md`, the topic pages live in `intro/`, and code-server is
+passed the folder and nothing else. The setting falls back to the welcome page
+when there is no readme, so it is written as `none` when the seed failed.
+
+JupyterLab has no such constraint — `--LabApp.default_url` opens any path under
+`root_dir` — but pointing it at the same `README.md` keeps one main page instead
+of two. It is dropped with a warning if the page is not under `CIRRUS_WORKDIR`,
+and not set at all in the BYO-image OOD app, which supplies its own Jupyter
+config. `cirrus-intro` covers that case, and the tcsh-terminal case, and someone
+who closed the tab:
+
+```bash
+cirrus-intro          # list the pages, main page first as 0
+cirrus-intro 2        # read page 2 -- the number is the file's own prefix
+cirrus-intro helm     # or match on the filename
+cirrus-intro --path   # where the topic pages are
+cirrus-intro --main   # where the main page is
+```
+
+### Editing the material
+
+Edit `content/README.md` or `content/intro/*.md` and rebuild. There is nothing to
+register: `cirrus-intro` takes each page's title from its first heading and its
+selector from the numeric prefix on its filename, so adding a page is adding a
+file. The only names that are wired are `CIRRUS_START_PAGE` and the two
+`editorAssociations` globs, which are derived from `CIRRUS_CONTENT_DIR` and
+`CIRRUS_WORKDIR` at runtime.
+
+The pages assume as little about the cluster as they can. Demo workloads use the
+image the session is already running —
+
+```bash
+kubectl get pod "$(hostname)" -o jsonpath='{.spec.containers[0].image}'
+```
+
+— rather than a Docker Hub reference, so nothing depends on the cluster having a
+route to the public internet, and nothing in the material has to be edited when
+the image is retagged. The Helm page works from a local chart for the same
+reason, and the Argo CD page does not presume a server endpoint, because there is
+no site-wide one to hardcode. The deeper hands-on workshops it hands off to are
+linked from the main page.
+
 ## Home directory isolation
 
 `$HOME` is the user's GLADE home, shared with Casper and Derecho. A wheel
@@ -314,7 +515,12 @@ docker run --rm -p 8888:8080 -e CIRRUS_BASE_URL=/node/host/8080/ \
   cirrus-workshop:dev jupyter   # -> http://localhost:8888/node/host/8080/
 ```
 
-## Verification helper
+## Helpers
+
+`cirrus-intro` reads the introduction pages from a terminal, and
+`cirrus-versions` prints the pinned tool versions. Both are covered above.
+
+### Verification helper
 
 `cirrus-check [lab-number]` checks the session itself: kubeconfig present,
 readable, and not the user's own file; context is `mlc1`; namespace matches

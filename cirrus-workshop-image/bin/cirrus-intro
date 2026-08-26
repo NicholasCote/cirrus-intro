@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# Read the workshop introduction pages from a terminal.
+#
+#   cirrus-intro         list the pages
+#   cirrus-intro 2       read page 2 -- the number is the file's own prefix, so
+#                        the numbering printed by the listing is the numbering
+#                        the pages themselves use
+#   cirrus-intro helm    read the page whose name matches "helm"
+#   cirrus-intro --path  print the directory the pages are in
+#
+# The editors open these rendered -- JupyterLab via default_url and a Markdown
+# Preview default viewer, code-server via a positional argument and an editor
+# association. This exists for the cases where that does not apply: a tcsh
+# terminal, someone who closed the tab, or the BYO-image OOD app, which supplies
+# its own Jupyter config and so never sees our default_url.
+
+set -uo pipefail
+
+PROG="cirrus-intro"
+
+# The seeded copies in the working directory are preferred over the image's own,
+# so that what you read is what the file browser shows. Both fall back to the
+# image when seeding was skipped (a read-only $HOME, say).
+SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
+WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-workshop}"
+START="${CIRRUS_START_PAGE:-README.md}"
+
+DIR="${CIRRUS_CONTENT_DIR:-${WORKDIR}/intro}"
+[ -d "$DIR" ] || DIR="${SRC}/intro"
+
+# The main page lives at the root of the working directory rather than in DIR,
+# because code-server will only open a folder's README.md on launch. It is
+# listed first regardless of where it was found.
+MAIN="${WORKDIR}/${START}"
+[ -f "$MAIN" ] || MAIN="${SRC}/${START}"
+[ -f "$MAIN" ] || MAIN=""
+
+if [ ! -d "$DIR" ] && [ -z "$MAIN" ]; then
+    printf '%s: no introduction content found.\n' "$PROG" >&2
+    printf 'Looked under CIRRUS_WORKDIR and CIRRUS_CONTENT_SRC.\n' >&2
+    exit 1
+fi
+
+# Title = the first ATX heading, so the listing stays correct if a page is
+# retitled and nothing has to be kept in step by hand.
+title_of() {
+    sed -n 's/^#[[:space:]]\{1,\}//p' -- "$1" 2>/dev/null | head -1
+}
+
+pages() {
+    [ -n "$MAIN" ] && printf '%s\n' "$MAIN"
+    find "$DIR" -maxdepth 1 -name '*.md' -type f 2>/dev/null | LC_ALL=C sort
+}
+
+usage() {
+    cat >&2 <<USAGE
+usage: ${PROG} [n | name | --path | --list]
+
+  (no argument)  list the pages
+  n              read the page numbered n (the prefix on its filename)
+  name           read the first page whose filename contains "name"
+  --path         print the directory the pages are in
+  --main         print the path of the main page
+USAGE
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    --path) printf '%s\n' "$DIR"; exit 0 ;;
+    --main) printf '%s\n' "${MAIN}"; exit 0 ;;
+esac
+
+mapfile -t FILES < <(pages)
+if [ "${#FILES[@]}" -eq 0 ]; then
+    printf '%s: no .md pages in %s\n' "$PROG" "$DIR" >&2
+    exit 1
+fi
+
+if [ "$#" -eq 0 ] || [ "${1:-}" = "--list" ]; then
+    printf 'CIRRUS workshop introduction\n\n'
+    for f in "${FILES[@]}"; do
+        base="$(basename -- "$f")"
+        # The selector is the filename's own prefix, stripped of leading zeros,
+        # so what is printed here is what gets typed.
+        n="${base%%-*}"
+        case "$n" in
+            *[!0-9]*|'') n="0" ;;      # the main page: no prefix, selector 0
+            *) n="$((10#$n))" ;;
+        esac
+        printf '  %3s  %-24s %s\n' "$n" "$base" "$(title_of "$f")"
+    done
+    printf '\nRead one with: %s <number>\n' "$PROG"
+    printf 'Main page: %s\n' "${MAIN:-<none>}"
+    printf 'Pages:     %s\n' "$DIR"
+    exit 0
+fi
+
+want="$1"
+target=""
+
+if printf '%s' "$want" | grep -Eq '^[0-9]+$'; then
+    # Matched against the filename's numeric prefix rather than the position in
+    # the listing, so `cirrus-intro 2` is page 2 whatever else is installed --
+    # and so the page numbers used inside the material are the ones that work.
+    for f in "${FILES[@]}"; do
+        n="${f##*/}"; n="${n%%-*}"
+        case "$n" in
+            *[!0-9]*|'') n=0 ;;        # the main page
+        esac
+        if [ "$((10#$n))" -eq "$((10#$want))" ]; then target="$f"; break; fi
+    done
+else
+    for f in "${FILES[@]}"; do
+        case "$(basename -- "$f")" in
+            *"$want"*) target="$f"; break ;;
+        esac
+    done
+fi
+
+if [ -z "$target" ]; then
+    printf '%s: no page matching: %s\n\n' "$PROG" "$want" >&2
+    "$0" --list >&2
+    exit 1
+fi
+
+# less -R so the pages keep their formatting; not a Markdown renderer, because
+# adding one would be a Python dependency for something the editors already do
+# better. The ownership marker on the main page's first line is stripped: it is
+# an HTML comment, invisible in a rendered view, and noise in a pager.
+strip_marker() { sed '/^<!-- cirrus-content:/d' -- "$1"; }
+
+if [ -t 1 ] && command -v less >/dev/null 2>&1; then
+    strip_marker "$target" | less -R
+    exit $?
+fi
+strip_marker "$target"

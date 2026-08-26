@@ -70,6 +70,15 @@ export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/cirrus-workshop}"
 export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/.jupyter}"
 
 # ---------------------------------------------------------------------------
+# The introduction pages. Exported here so that `cirrus-intro` in a terminal
+# reads the copy in the working directory -- the same files the editor's file
+# browser shows -- rather than the image's own read-only original.
+# ---------------------------------------------------------------------------
+export CIRRUS_CONTENT_SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
+export CIRRUS_CONTENT_DIR="${CIRRUS_CONTENT_DIR:-${CIRRUS_WORKDIR}/intro}"
+export CIRRUS_START_PAGE="${CIRRUS_START_PAGE:-README.md}"
+
+# ---------------------------------------------------------------------------
 # Completion and the k alias. Bash-only and interactive-only: a completion
 # script sourced into a non-interactive shell is wasted work, and `complete` is
 # not a POSIX sh builtin.
