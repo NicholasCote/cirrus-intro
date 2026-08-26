@@ -56,6 +56,26 @@ script:
         host: "gladenfs.hpc.ucar.edu"
         path: "/gpfs/u/home/<%= user.name %>"
         destination_path: "<%= user.home %>"
+      - type: nfs
+        name: campaign
+        host: "gladedm1.ucar.edu"
+        path: "/gpfs/csfs1"
+        destination_path: /glade/campaign
+      - type: nfs
+        name: gdex
+        host: "gladedm1.ucar.edu"
+        path: "/gpfs/csfs1/collections/gdex"
+        destination_path: /gdex
+      - type: nfs
+        name: collections
+        host: "gladedm1.ucar.edu"
+        path: "/gpfs/csfs1/collections"
+        destination_path: /glade/collections
+      - type: nfs
+        name: work
+        host: "gladedm1.ucar.edu"
+        path: "/gpfs/csfs1/work"
+        destination_path: /glade/work
 <%- if editor_choice == "jupyter" -%>
     configmap:
       files:
