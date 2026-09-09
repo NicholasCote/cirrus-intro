@@ -1,43 +1,7 @@
-# CIRRUS workshop image
-#
-# One image, two Open OnDemand apps: JupyterLab and code-server. Everything
-# lives under /opt and /usr/local, root-owned and world-readable, because the
-# pod runs as the user's real NFS uid/gid and nothing in the image may need to
-# be chowned or written to at startup.
-#
-# Deliberately not a Jupyter Docker Stacks base: those bake a jovyan user at
-# uid 1000, a conda prefix owned by that uid, and a fix-permissions/start.sh
-# chain that assumes it can chown at startup. All of that fights an arbitrary
-# runtime uid with a GLADE home over NFS.
-
 ARG UBUNTU_VERSION=24.04
 
-# --------------------------------------------------------------------------
-# Pinned tool versions.
-#
-# Deliberately a short list. kustomize, k9s and the argo (Argo Workflows) CLI were
-# dropped after the first OOD trial: the labs are kubectl-centric, the CIRRUS
-# clusters accept plain manifests, and k9s is a lot of interface for someone
-# meeting Kubernetes for the first time. That also removed ~640 of the ~1270
-# vendored Go modules in the image, and with kustomize went the only Critical in
-# the scan (its newest release is built with Go 1.24.0). Adding argo back later is
-# one ARG, one RUN and one versions.txt line. Nothing here is :latest or "stable" -- a session that
-# worked at the last workshop has to work at the next one, and the versions
-# baked in are recorded in /opt/cirrus/versions.txt so a bug report can name
-# them.
-# --------------------------------------------------------------------------
-
-# kubectl tracks the CIRRUS control plane minor and never leads it. mlc1/nwc1
-# are on 1.35.6 as of 2026-08-18 and are upgraded roughly quarterly, so this
-# is the ARG to bump right after a control plane upgrade -- not before.
 ARG KUBECTL_VERSION=v1.35.7
 
-# Azure/kubelogin, NOT int128/kubelogin. The CIRRUS kubeconfig's exec block is
-#   command: kubelogin
-#   args: get-token --environment AzurePublicCloud --server-id ... --client-id ... --tenant-id ...
-# which is the Azure flavor (see the CIRRUS docs, guides/10-kubectl). int128's
-# oidc-login plugin takes --oidc-issuer-url/--oidc-client-id and would reject
-# every one of those flags.
 ARG KUBELOGIN_VERSION=v0.2.19
 
 ARG HELM_VERSION=v3.21.4
@@ -46,9 +10,6 @@ ARG STERN_VERSION=v1.34.0
 ARG YQ_VERSION=v4.53.3
 ARG CODE_SERVER_VERSION=4.133.0
 
-# Python. Kept deliberately small: this is a Kubernetes workshop, not a data
-# science environment. Anyone who needs the scientific stack builds a venv of
-# their own in $HOME.
 ARG JUPYTERLAB_VERSION=4.6.3
 ARG NOTEBOOK_VERSION=7.6.2
 ARG JUPYTERLAB_GIT_VERSION=0.54.1
@@ -57,28 +18,12 @@ ARG PYYAML_VERSION=6.0.3
 ARG KUBERNETES_PY_VERSION=36.0.3
 ARG REQUESTS_VERSION=2.34.2
 
-# code-server extensions, from Open VSX (code-server's default marketplace;
-# the Microsoft marketplace is not licensed for use here).
 ARG EXT_YAML_VERSION=1.25.2026081408
 ARG EXT_K8S_VERSION=1.4.1
 
-# Notebook support for code-server, so the .ipynb edition of the material is
-# runnable in VS Code and not just in JupyterLab. ms-toolsai.jupyter is the
-# kernel provider -- code-server's built-in `ipynb` extension only renders
-# notebooks, it cannot execute a cell. ms-python.python comes with it because
-# without an interpreter provider the Jupyter extension has no reliable way to
-# discover the kernelspec in /opt/venv.
-#
-# Both are on Open VSX, which is the only marketplace code-server can use.
-# These two are the reason to re-check image size after a bump; if the workshop
-# settles on the Markdown edition, they are the first thing to drop.
 ARG EXT_JUPYTER_VERSION=2025.9.1
 ARG EXT_PYTHON_VERSION=2026.4.0
 
-# ==========================================================================
-# tools -- download and unpack every pinned binary in one throwaway stage so
-# the runtime image never carries the archives.
-# ==========================================================================
 FROM ubuntu:${UBUNTU_VERSION} AS tools
 
 ARG KUBECTL_VERSION
@@ -89,7 +34,6 @@ ARG STERN_VERSION
 ARG YQ_VERSION
 ARG CODE_SERVER_VERSION
 
-# buildx sets TARGETARCH; default it so a plain `docker build` also works.
 ARG TARGETARCH=amd64
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -223,12 +167,34 @@ RUN set -eu; \
         "pyyaml==${PYYAML_VERSION}" \
         "kubernetes==${KUBERNETES_PY_VERSION}" \
         "requests==${REQUESTS_VERSION}"; \
-    /opt/venv/bin/python -m ipykernel install --prefix=/opt/venv --name python3 --display-name "Python 3 (CIRRUS)"; \
     chmod -R a+rX /opt/venv; \
     # Only needed to bootstrap the venv above, and years behind what the venv
     # ended up with (pip 24.0 / setuptools 68.1.2 vs pip 26.x / setuptools 84.x).
     # Dead weight that scanners correctly report.
     rm -rf /usr/share/python-wheels
+
+# --------------------------------------------------------------------------
+# The IPython kernelspec, installed to /usr/local rather than into the venv.
+#
+# --prefix=/opt/venv is the obvious choice and only works in JupyterLab, which
+# searches sys.prefix. VS Code's Jupyter extension does not: it scans
+# $JUPYTER_PATH, the user data dir, /usr/local/share/jupyter and
+# /usr/share/jupyter, and the prefix of each interpreter the *Python* extension
+# managed to discover. It never discovers /opt/venv -- ms-python.vscode-python-envs
+# searches only `.venv` in the workspace plus python-envs.globalSearchPaths --
+# so the kernelspec was invisible there, and opening a notebook fell back to the
+# system /bin/python3, which has no ipykernel:
+#
+#   Running cells with 'Python 3.12.3' requires the ipykernel package.
+#
+# /usr/local/share/jupyter is on both editors' search paths, so one kernelspec
+# now serves both. argv still points at /opt/venv/bin/python, which is where
+# ipykernel actually lives.
+# --------------------------------------------------------------------------
+RUN set -eu; \
+    /opt/venv/bin/python -m ipykernel install \
+        --prefix=/usr/local --name python3 --display-name "Python 3 (CIRRUS)"; \
+    chmod -R a+rX /usr/local/share/jupyter
 
 # --------------------------------------------------------------------------
 # code-server extensions, pre-installed into a system directory so nobody is
@@ -370,7 +336,8 @@ COPY content/ /opt/cirrus/content/
 # replaced next launch"; see seed_intro_pages() there.
 COPY --chmod=0755 tools/md2ipynb.py /opt/cirrus/bin/md2ipynb.py
 RUN set -eu; \
-    python3 /opt/cirrus/bin/md2ipynb.py /opt/cirrus/content/intro /opt/cirrus/content/intro; \
+    python3 /opt/cirrus/bin/md2ipynb.py \
+        /opt/cirrus/content/cirrus-intro /opt/cirrus/content/cirrus-intro; \
     find /opt/cirrus/content -type d -exec chmod 0755 {} +; \
     find /opt/cirrus/content -type f -exec chmod 0444 {} +; \
     find /opt/cirrus/content -type f -name '*.ipynb' -exec chmod 0644 {} +
@@ -436,8 +403,8 @@ RUN set -eu; \
 # CIRRUS_START_PAGE is the main page, relative to CIRRUS_WORKDIR, and is README.md
 # because that is the only filename code-server can be made to open on launch --
 # see the code branch of the entrypoint. CIRRUS_CONTENT_DIR is deliberately not
-# set here: it defaults to $CIRRUS_WORKDIR/intro, and CIRRUS_WORKDIR is only
-# known at runtime.
+# set here: it defaults to $CIRRUS_WORKDIR/cirrus-intro, and CIRRUS_WORKDIR is
+# only known at runtime.
 ENV CIRRUS_PORT=8080 \
     CIRRUS_STATE_DIR=/tmp/cirrus \
     KUBECONFIG=/tmp/cirrus/kube/config \

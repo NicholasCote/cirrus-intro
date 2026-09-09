@@ -411,14 +411,14 @@ for the `kubernetes` Python client.
 
 ## I cannot save an edit to these pages
 
-Correct — `~/cirrus-workshop/README.md` and everything under `intro/` are
+Correct — `~/cirrus-workshop/README.md` and everything under `cirrus-intro/` are
 read-only, and both are replaced from the image at every launch. That is what
 keeps them current without anyone copying anything.
 
 If you want to annotate them, copy first:
 
 ```bash
-cp ~/cirrus-workshop/intro/03-kubernetes.md ~/cirrus-workshop/my-notes.md
+cp ~/cirrus-workshop/cirrus-intro/03-kubernetes.md ~/cirrus-workshop/my-notes.md
 ```
 
 Anything else in `~/cirrus-workshop/` is on your GLADE home and persists. If you

@@ -251,7 +251,7 @@ mkdir -p -- "$JUPYTER_CONFIG_DIR" 2>/dev/null || \
 #   $CIRRUS_CONTENT_DIR                the pages it links to.
 # ---------------------------------------------------------------------------
 CIRRUS_CONTENT_SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
-CIRRUS_CONTENT_DIR="${CIRRUS_CONTENT_DIR:-${CIRRUS_WORKDIR}/intro}"
+CIRRUS_CONTENT_DIR="${CIRRUS_CONTENT_DIR:-${CIRRUS_WORKDIR}/cirrus-intro}"
 # Relative to CIRRUS_WORKDIR, because that is what both editors need it as.
 CIRRUS_START_PAGE="${CIRRUS_START_PAGE:-README.md}"
 export CIRRUS_CONTENT_SRC CIRRUS_CONTENT_DIR CIRRUS_START_PAGE
@@ -266,11 +266,47 @@ START_PAGE_PATH=""
 CIRRUS_CONTENT_STAMP=".cirrus-content"
 CIRRUS_CONTENT_MARKER="cirrus-content:"
 
+# The pages were seeded as $CIRRUS_WORKDIR/intro until 2026-09; anyone whose
+# working directory is their GLADE home had to pick that out of everything else
+# already there. A stamped copy under the old name is one of ours, so it is
+# moved across rather than left behind as a second, stale directory -- and moved
+# rather than deleted, so that the notebook comparison in seed_intro_pages sees
+# it exactly as it would have before the rename and a half-finished page
+# survives. An *unstamped* intro/ belongs to the user and is never touched.
+#
+# Only when CIRRUS_CONTENT_DIR is the default: someone who set it themselves has
+# said where the pages go, and the old directory is not ours to move there.
+migrate_legacy_content_dir() {
+    local legacy="${CIRRUS_WORKDIR}/intro"
+
+    [ "$CIRRUS_CONTENT_DIR" = "${CIRRUS_WORKDIR}/cirrus-intro" ] || return 0
+    [ -d "$legacy" ] || return 0
+    [ -e "${legacy}/${CIRRUS_CONTENT_STAMP}" ] || return 0
+
+    if [ -e "$CIRRUS_CONTENT_DIR" ]; then
+        if rm -rf -- "$legacy" 2>/dev/null; then
+            log "removed the old ${legacy}; the pages are in ${CIRRUS_CONTENT_DIR} now"
+        else
+            warn "could not remove the old ${legacy}; its pages are out of date"
+        fi
+        return 0
+    fi
+
+    if mv -- "$legacy" "$CIRRUS_CONTENT_DIR" 2>/dev/null; then
+        log "the pages moved from ${legacy} to ${CIRRUS_CONTENT_DIR}"
+    else
+        warn "could not move ${legacy} to ${CIRRUS_CONTENT_DIR}; you may see both."
+        warn "${CIRRUS_CONTENT_DIR} is the current one -- the old directory can go."
+    fi
+}
+
 seed_intro_pages() {
-    if [ ! -d "${CIRRUS_CONTENT_SRC}/intro" ]; then
-        warn "no introduction pages at ${CIRRUS_CONTENT_SRC}/intro"
+    if [ ! -d "${CIRRUS_CONTENT_SRC}/cirrus-intro" ]; then
+        warn "no introduction pages at ${CIRRUS_CONTENT_SRC}/cirrus-intro"
         return 1
     fi
+
+    migrate_legacy_content_dir
 
     # A directory of that name with no stamp in it was made by the user, not by
     # a previous launch of this image. Removing it would be destroying their
@@ -290,7 +326,7 @@ seed_intro_pages() {
     # directory half-updated if something fails partway.
     local staged="${CIRRUS_CONTENT_DIR}.new"
     rm -rf -- "$staged" 2>/dev/null || true
-    if ! cp -a -- "${CIRRUS_CONTENT_SRC}/intro" "$staged" 2>/dev/null; then
+    if ! cp -a -- "${CIRRUS_CONTENT_SRC}/cirrus-intro" "$staged" 2>/dev/null; then
         warn "could not stage the introduction pages at ${staged}"
         warn "(is ${CIRRUS_WORKDIR} writable?). Read them with 'cirrus-intro' instead."
         rm -rf -- "$staged" 2>/dev/null || true
@@ -314,7 +350,7 @@ seed_intro_pages() {
         for nb in "$CIRRUS_CONTENT_DIR"/*.ipynb; do
             [ -f "$nb" ] || continue
             base="$(basename -- "$nb")"
-            pristine="${CIRRUS_CONTENT_SRC}/intro/${base}"
+            pristine="${CIRRUS_CONTENT_SRC}/cirrus-intro/${base}"
             if [ -f "$pristine" ] && cmp -s -- "$nb" "$pristine"; then
                 continue                      # never opened; let the fresh one win
             fi
@@ -352,7 +388,7 @@ seed_intro_pages() {
 
     if [ -n "$kept" ]; then
         log "kept your own copy of:${kept}"
-        log "  (the pristine notebooks are always at ${CIRRUS_CONTENT_SRC}/intro)"
+        log "  (the pristine notebooks are always at ${CIRRUS_CONTENT_SRC}/cirrus-intro)"
     fi
     if [ -n "$orphaned" ]; then
         log "kept your own copy of:${orphaned}"
@@ -722,6 +758,8 @@ code)
     "**/node_modules": true
   },
   "python.defaultInterpreterPath": "/opt/venv/bin/python3",
+  "python-envs.globalSearchPaths": ["/opt"],
+  "jupyter.kernels.excludePythonEnvironments": ["/bin/python3", "/usr/bin/python3"],
   "jupyter.askForKernelRestart": false,
   "search.followSymlinks": false,
   "telemetry.telemetryLevel": "off"
@@ -747,6 +785,16 @@ SETTINGS
             -e "s|START_PAGE_GLOB|**/$(basename -- "$CIRRUS_WORKDIR")/${CIRRUS_START_PAGE}|" \
             -e "s|STARTUP_EDITOR|$([ -n "$START_PAGE_PATH" ] && echo readme || echo none)|" \
             "$USER_SETTINGS"
+        # The two Python keys are about the notebook edition of the material.
+        # ms-python.vscode-python-envs looks for environments in `.venv` under
+        # the workspace and in python-envs.globalSearchPaths, and in nothing
+        # else -- so /opt/venv goes undiscovered and the Jupyter extension
+        # offers the system /bin/python3, which has no ipykernel. The search
+        # path takes the *parent* of the environments, hence /opt rather than
+        # /opt/venv, and the exclusion keeps the system interpreters out of the
+        # kernel picker so a wrong pick is not on offer in the first place. The
+        # kernel that should be used, "Python 3 (CIRRUS)", is the kernelspec the
+        # image installs to /usr/local/share/jupyter.
         log "seeded VS Code settings at ${USER_SETTINGS} (dotfiles hidden, as in JupyterLab)"
     fi
 

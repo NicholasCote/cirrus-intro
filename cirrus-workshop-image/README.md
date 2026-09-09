@@ -100,7 +100,7 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_KUBECTL_TIMEOUT` | `300s` | `cirrus-check`'s API timeout; long enough for a human to complete a device-code sign-in |
 | `CIRRUS_EXTENSIONS_DIR` | `$CIRRUS_STATE_DIR/code-server/extensions` | |
 | `CIRRUS_CONTENT_SRC` | `/opt/cirrus/content` | the image's copy of the introduction material |
-| `CIRRUS_CONTENT_DIR` | `$CIRRUS_WORKDIR/intro` | where the topic pages are copied to at startup |
+| `CIRRUS_CONTENT_DIR` | `$CIRRUS_WORKDIR/cirrus-intro` | where the topic pages are copied to at startup |
 | `CIRRUS_START_PAGE` | `README.md` | the main page, relative to `CIRRUS_WORKDIR` |
 | `CIRRUS_SEED_CONTENT` | `1` | `0` leaves both copies completely alone |
 
@@ -263,7 +263,7 @@ To try it:
 ## The introduction material
 
 `content/` in this directory is the workshop text: a main page (`README.md`) and
-`intro/` with eleven pages plus troubleshooting. It is baked into the image at
+`cirrus-intro/` with eleven pages plus troubleshooting. It is baked into the image at
 `/opt/cirrus/content`, so the pages and the tool versions they describe ship as
 one artifact.
 
@@ -303,9 +303,20 @@ Adding a page to `PAGES` is how that changes.
 Markdown is the right source because it renders in **both** editors with no
 extension at all. Notebooks needed something added: code-server's built-in
 `ipynb` extension only *renders* a notebook, so `ms-toolsai.jupyter` (the kernel
-provider) and `ms-python.python` (which is how it finds the kernelspec in
-`/opt/venv`) are installed from Open VSX alongside the YAML and Kubernetes ones.
-They are pinned like everything else and recorded in `versions.txt`.
+provider) and `ms-python.python` (the interpreter provider) are installed from
+Open VSX alongside the YAML and Kubernetes ones. They are pinned like everything
+else and recorded in `versions.txt`.
+
+The kernelspec is installed to `/usr/local/share/jupyter`, not into the venv,
+and that is not a detail. JupyterLab searches `sys.prefix` and would find it
+either way; the Jupyter extension does not, and its interpreter-based fallback
+does not find `/opt/venv` either -- `ms-python.vscode-python-envs` searches
+`.venv` under the workspace and `python-envs.globalSearchPaths`, nothing more.
+With the kernelspec inside the venv, a notebook in VS Code fell back to the
+system `/bin/python3` and reported `Running cells with 'Python 3.12.3' requires
+the ipykernel package`. `/usr/local/share/jupyter` is on both editors' search
+paths; the entrypoint additionally points `globalSearchPaths` at `/opt` and
+hides the system interpreters from the kernel picker.
 
 Those two pull in six more as dependencies (`debugpy`, `vscode-python-envs`,
 `jupyter-renderers`, `jupyter-keymap`, `cell-tags`, `slideshow`) and cost about
@@ -363,7 +374,7 @@ it is to execute the notebook, not to read it:
 ```bash
 jupyter nbconvert --to notebook --execute --allow-errors \
   --ExecutePreprocessor.timeout=120 --output-dir /tmp --output done.ipynb \
-  /opt/cirrus/content/intro/01-containers.ipynb
+  /opt/cirrus/content/cirrus-intro/01-containers.ipynb
 ```
 
 ### Why it is copied into the working directory
@@ -381,7 +392,7 @@ that safe rather than destructive:
 * The files are written mode `0444`. An editor refuses to save over a page
   instead of accepting an edit the next launch would silently discard.
   Directories stay `0755`, because the next launch has to be able to remove them.
-* `content/intro/.cirrus-content` ships *inside* the content, so a successful copy
+* `content/cirrus-intro/.cirrus-content` ships *inside* the content, so a successful copy
   always brings the stamp along. `seed_intro_pages()` refuses to touch a
   `CIRRUS_CONTENT_DIR` that exists *without* that stamp — that is a directory the
   user made, and removing it to install ours would be destroying their work.
@@ -398,9 +409,17 @@ that safe rather than destructive:
   theirs is kept and the fact is logged. Corrections still reach anyone who has
   not started, and nobody loses a lesson they have.
 
-The directory is staged as `intro.new` and moved into place rather than being
+The directory is staged as `cirrus-intro.new` and moved into place rather than being
 overwritten, so a failure partway cannot leave it half-updated — and so the
 notebook carry-over above has somewhere to happen before the swap.
+
+The directory was called `intro/` until September 2026, which was fine under
+`~/cirrus-workshop/` and useless to anyone who pointed the form at their GLADE
+home, where it sat unrecognisable among everything else. `seed_intro_pages()`
+moves a *stamped* `intro/` to `cirrus-intro/` on the next launch — moves, so the
+notebook carry-over above still sees it and a half-finished page survives — and
+leaves an unstamped one alone, since that one is the user's. The migration is
+skipped entirely when `CIRRUS_CONTENT_DIR` has been set by hand.
 
 Every failure here degrades: a read-only `$HOME`, a missing content directory, a
 `README.md` of the user's own, or `CIRRUS_SEED_CONTENT=0` costs the main page and
@@ -433,7 +452,7 @@ survive code-server's redirect, so it cannot be reached from the CLI.
 
 What does work is `workbench.startupEditor: "readme"`, which opens a readme from
 the root of the opened folder, in preview. Hence: the main page is the working
-directory's `README.md`, the topic pages live in `intro/`, and code-server is
+directory's `README.md`, the topic pages live in `cirrus-intro/`, and code-server is
 passed the folder and nothing else. The setting falls back to the welcome page
 when there is no readme, so it is written as `none` when the seed failed.
 
@@ -454,7 +473,7 @@ cirrus-intro --main   # where the main page is
 
 ### Editing the material
 
-Edit `content/README.md` or `content/intro/*.md` and rebuild. There is nothing to
+Edit `content/README.md` or `content/cirrus-intro/*.md` and rebuild. There is nothing to
 register: `cirrus-intro` takes each page's title from its first heading and its
 selector from the numeric prefix on its filename, so adding a page is adding a
 file. The only names that are wired are `CIRRUS_START_PAGE` and the two

@@ -17,7 +17,7 @@ info.md.erb             session card: which editor and shell were chosen
 template/               required by Batch Connect; empty, since submit.yml.erb
                         uses the built-in "basic" template
 cirrus-workshop-image/  the image this app launches -- own README, own Dockerfile
-  content/              the workshop text: README.md plus intro/ per lesson
+  content/              the workshop text: README.md plus cirrus-intro/ per lesson
   tools/                md2ipynb.py -- generates the notebook edition at build
 .github/workflows/      builds and pushes that image to Harbor on a date tag
 ```
@@ -82,7 +82,7 @@ handles an unknown uid itself with `nss_wrapper`.
 
 Not an empty file browser. The workshop material lives in the image at
 `/opt/cirrus/content`; the entrypoint installs it as `$CIRRUS_WORKDIR/README.md`
-plus `$CIRRUS_WORKDIR/intro/`, and both editors open that `README.md` — which
+plus `$CIRRUS_WORKDIR/cirrus-intro/`, and both editors open that `README.md` — which
 links to the eleven lessons and the troubleshooting page.
 
 The lessons are in delivery order: orientation (what CIRRUS is, the two sites,
@@ -107,7 +107,7 @@ a `README.md` the user already had, costs the main page and nothing else, and
 `cirrus-intro` in a terminal reads the material either way.
 
 `working_dir` on the launch form is where both copies land, since it is where the
-editor opens. Someone who points it at a directory that already has an `intro/`
+editor opens. Someone who points it at a directory that already has an `cirrus-intro/`
 or a `README.md` of their own keeps theirs and gets a warning.
 
 ## Assumptions to verify on first launch

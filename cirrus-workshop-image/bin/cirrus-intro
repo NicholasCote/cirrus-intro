@@ -26,8 +26,8 @@ SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
 WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-workshop}"
 START="${CIRRUS_START_PAGE:-README.md}"
 
-DIR="${CIRRUS_CONTENT_DIR:-${WORKDIR}/intro}"
-[ -d "$DIR" ] || DIR="${SRC}/intro"
+DIR="${CIRRUS_CONTENT_DIR:-${WORKDIR}/cirrus-intro}"
+[ -d "$DIR" ] || DIR="${SRC}/cirrus-intro"
 
 # The main page lives at the root of the working directory rather than in DIR,
 # because code-server will only open a folder's README.md on launch. It is

@@ -43,7 +43,7 @@ which is why it hands you a code instead of opening one for you.
 
 The command then completes. The token is cached for about an hour, so the next
 `kubectl` will not ask again. When it expires you sign in once more — see
-[Troubleshooting](intro/99-troubleshooting.md#i-am-asked-to-sign-in-again) for why
+[Troubleshooting](cirrus-intro/99-troubleshooting.md#i-am-asked-to-sign-in-again) for why
 there is no silent refresh.
 
 ### 3. Check the session
@@ -56,7 +56,7 @@ Twenty checks: is there a session kubeconfig, is it pointed at the workshop
 cluster and *your* namespace, is your home directory being kept out of harm's
 way, can a token be obtained, does an authorized call come back. Every line
 should say `PASS`. If any say `FAIL`, the message names what to fix — and
-[Troubleshooting](intro/99-troubleshooting.md) covers the ones that come up.
+[Troubleshooting](cirrus-intro/99-troubleshooting.md) covers the ones that come up.
 
 ---
 
@@ -71,11 +71,11 @@ so neither is behind the other.
 
 | | lesson | read | run | what it covers |
 | --- | --- | --- | --- | --- |
-| 1 | Orientation | [md](intro/01-orientation.md) | [ipynb](intro/01-orientation.ipynb) | What CIRRUS is, the two sites, when to use it instead of Casper or Derecho, how to get access, and what comes with it |
-| 2 | Containers | [md](intro/02-containers.md) | [ipynb](intro/02-containers.ipynb) | What a container actually is, how to build one, and the registry that holds it — including CVE scans and SBOMs |
-| 3 | Kubernetes | [md](intro/03-kubernetes.md) | [ipynb](intro/03-kubernetes.ipynb) | `kubectl` and your namespace; Pods, Deployments, Services, Ingresses, ConfigMaps, PVCs — written and applied by hand |
-| 4 | Helm | [md](intro/04-helm.md) | [ipynb](intro/04-helm.ipynb) | Packaging those manifests into something installable, configurable and reviewable |
-| 5 | Argo CD | [md](intro/05-argocd.md) | [ipynb](intro/05-argocd.ipynb) | GitOps: the cluster pulling its own desired state from a repository, and how an application gets onboarded here |
+| 1 | Orientation | [md](cirrus-intro/01-orientation.md) | [ipynb](cirrus-intro/01-orientation.ipynb) | What CIRRUS is, the two sites, when to use it instead of Casper or Derecho, how to get access, and what comes with it |
+| 2 | Containers | [md](cirrus-intro/02-containers.md) | [ipynb](cirrus-intro/02-containers.ipynb) | What a container actually is, how to build one, and the registry that holds it — including CVE scans and SBOMs |
+| 3 | Kubernetes | [md](cirrus-intro/03-kubernetes.md) | [ipynb](cirrus-intro/03-kubernetes.ipynb) | `kubectl` and your namespace; Pods, Deployments, Services, Ingresses, ConfigMaps, PVCs — written and applied by hand |
+| 4 | Helm | [md](cirrus-intro/04-helm.md) | [ipynb](cirrus-intro/04-helm.ipynb) | Packaging those manifests into something installable, configurable and reviewable |
+| 5 | Argo CD | [md](cirrus-intro/05-argocd.md) | [ipynb](cirrus-intro/05-argocd.ipynb) | GitOps: the cluster pulling its own desired state from a repository, and how an application gets onboarded here |
 
 Pages 1 through 5 build on each other, and the application you deploy by hand in
 lesson 3 is the one you package in lesson 4 and hand to Argo CD in lesson 5. If
@@ -85,12 +85,12 @@ you read nothing else, read these.
 
 | | lesson | read | what it covers |
 | --- | --- | --- | --- |
-| 6 | Secret Manager | [md](intro/06-secrets.md) | OpenBao: where credentials live, and how they reach a pod without ever touching git |
-| 7 | Storage | [md](intro/07-storage.md) | PVCs and storage classes, GLADE, and the on-site S3 |
-| 8 | GitHub Actions | [md](intro/08-github-actions.md) | Runner scale sets on cluster hardware, building images without a Docker daemon, and CI security |
-| 9 | Observability | [md](intro/09-observability.md) | Finding your logs and metrics in Grafana, and alerting on your own application |
-| 10 | Specialized workloads | [md](intro/10-workloads.md) | Jupyter, functions as a service, MPI, and the LLM service |
-| — | Troubleshooting | [md](intro/99-troubleshooting.md) | The failures people actually hit here |
+| 6 | Secret Manager | [md](cirrus-intro/06-secrets.md) | OpenBao: where credentials live, and how they reach a pod without ever touching git |
+| 7 | Storage | [md](cirrus-intro/07-storage.md) | PVCs and storage classes, GLADE, and the on-site S3 |
+| 8 | GitHub Actions | [md](cirrus-intro/08-github-actions.md) | Runner scale sets on cluster hardware, building images without a Docker daemon, and CI security |
+| 9 | Observability | [md](cirrus-intro/09-observability.md) | Finding your logs and metrics in Grafana, and alerting on your own application |
+| 10 | Specialized workloads | [md](cirrus-intro/10-workloads.md) | Jupyter, functions as a service, MPI, and the LLM service |
+| — | Troubleshooting | [md](cirrus-intro/99-troubleshooting.md) | The failures people actually hit here |
 
 Pages 6 to 10 are reference material rather than walkthroughs — a web UI, a
 ticket, or a manifest you commit rather than a command you type — so they ship as
@@ -121,18 +121,18 @@ run them. The pages are read-only and refresh from the image every launch.
 | --- | --- | --- |
 | `~/cirrus-workshop/` | your working directory — the editor opens here | **yes**, it is on your GLADE home |
 | `~/cirrus-workshop/README.md` | this page | replaced from the image every launch |
-| `~/cirrus-workshop/intro/` | the lessons, both editions | pages refresh every launch; notebooks you have run are kept |
+| `~/cirrus-workshop/cirrus-intro/` | the lessons, both editions | pages refresh every launch; notebooks you have run are kept |
 | `/tmp/cirrus/` | caches, tokens, editor state | no, it is the pod's own disk |
 | `/opt/cirrus/` | the read-only bits the image ships | it is the image |
 
 Two consequences worth internalising:
 
-**Put your work in `~/cirrus-workshop/`, not below `intro/`.** This page and the
+**Put your work in `~/cirrus-workshop/`, not below `cirrus-intro/`.** This page and the
 Markdown lessons are replaced from the image at every launch — that is how you
 get corrections without re-copying anything — so they are read-only, and your
 editor will refuse to save over one rather than let you lose an edit. Notebooks
 are the exception: once you have run one it is yours, and it is kept across
-launches instead of being replaced. Any *other* file you leave in `intro/` is
+launches instead of being replaced. Any *other* file you leave in `cirrus-intro/` is
 gone next session. Everything else in `~/cirrus-workshop/` is yours and
 persists.
 
@@ -200,7 +200,7 @@ workshop on one of them, these are the CIRRUS ones, and they fit together:
 
 | workshop | what it adds |
 | --- | --- |
-| [nbviz-to-container](https://github.com/NicholasCote/nbviz-to-container) | takes a Jupyter notebook visualisation and turns it into a containerised web server — the natural sequel to [page 2](intro/02-containers.md), and the one to do first if containers are the new part |
+| [nbviz-to-container](https://github.com/NicholasCote/nbviz-to-container) | takes a Jupyter notebook visualisation and turns it into a containerised web server — the natural sequel to [page 2](cirrus-intro/02-containers.md), and the one to do first if containers are the new part |
 | [k8s-argo-codespace](https://github.com/NicholasCote/k8s-argo-codespace) | Argo CD end to end against a real Flask application and Helm chart: install it, deploy through it, change a value in git and watch it sync, then break the image tag and watch it hold |
 | [gitops-harbor-workshop](https://github.com/NicholasCote/gitops-harbor-workshop) | the CI half — GitHub Actions building an image, a Harbor robot account, pushing to `hub.k8s.ucar.edu`, and Argo CD picking it up |
 
@@ -219,7 +219,7 @@ volumes, PostgreSQL, Dask, OpenBao secrets and Prometheus alerts. Every page fro
 
 * `cirrus-check` first, always. It turns "Kubernetes is broken" into a line
   naming what is wrong.
-* [Troubleshooting](intro/99-troubleshooting.md) for the specific failures this
+* [Troubleshooting](cirrus-intro/99-troubleshooting.md) for the specific failures this
   environment produces.
 * NCAR HPC documentation:
   <https://ncar-hpc-docs.readthedocs.io/en/latest/compute-systems/cirrus/>
@@ -229,4 +229,4 @@ volumes, PostgreSQL, Dask, OpenBao secrets and Prometheus alerts. Every page fro
   *Report Issue* forms linked from that site, or <cirrus-admin@ucar.edu>.
 * At a live workshop: ask. That is what the room is for.
 
-Ready — [1. Orientation: what CIRRUS is](intro/01-orientation.md).
+Ready — [1. Orientation: what CIRRUS is](cirrus-intro/01-orientation.md).
