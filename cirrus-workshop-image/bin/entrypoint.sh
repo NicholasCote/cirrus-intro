@@ -308,7 +308,7 @@ seed_intro_pages() {
     # version; different means the user ran or edited it, so theirs is kept.
     # That way corrections still reach anyone who has not started a page, and
     # nobody loses a page they have.
-    local kept=""
+    local kept="" orphaned=""
     if [ -d "$CIRRUS_CONTENT_DIR" ]; then
         local nb base pristine
         for nb in "$CIRRUS_CONTENT_DIR"/*.ipynb; do
@@ -318,7 +318,19 @@ seed_intro_pages() {
             if [ -f "$pristine" ] && cmp -s -- "$nb" "$pristine"; then
                 continue                      # never opened; let the fresh one win
             fi
-            cp -f -- "$nb" "${staged}/${base}" 2>/dev/null && kept="${kept} ${base}"
+            if cp -f -- "$nb" "${staged}/${base}" 2>/dev/null; then
+                # No pristine counterpart means the page was renamed or dropped
+                # upstream since the notebook was run -- most often a renumbering
+                # of the material. The user's copy is still their work, so it is
+                # kept, but it is called out separately: left silent it would sit
+                # in the directory under a filename that no longer matches
+                # anything, which reads as a bug in the material.
+                if [ -f "$pristine" ]; then
+                    kept="${kept} ${base}"
+                else
+                    orphaned="${orphaned} ${base}"
+                fi
+            fi
         done
     fi
 
@@ -341,6 +353,12 @@ seed_intro_pages() {
     if [ -n "$kept" ]; then
         log "kept your own copy of:${kept}"
         log "  (the pristine notebooks are always at ${CIRRUS_CONTENT_SRC}/intro)"
+    fi
+    if [ -n "$orphaned" ]; then
+        log "kept your own copy of:${orphaned}"
+        log "  -- but the material no longer ships a page under that name, so these"
+        log "  are yours alone now. 'cirrus-intro' lists the current pages; move"
+        log "  anything you want to keep up into ${CIRRUS_WORKDIR}."
     fi
     return 0
 }

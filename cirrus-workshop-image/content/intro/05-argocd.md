@@ -1,8 +1,8 @@
-# 4. Introduction to Argo CD
+# 5. GitOps with Argo CD
 
-← [Helm](03-helm.md) · next: [CIRRUS itself](05-cirrus.md)
+← [Helm](04-helm.md) · next: [Secret Manager](06-secrets.md)
 
-Pages 2 and 3 both ended in the same place: you have a declared desired state,
+Pages 3 and 4 both ended in the same place: you have a declared desired state,
 and nothing is making sure the cluster still matches it. You ran `kubectl apply`
 once. You ran `helm upgrade` once. In between, anyone with access — including
 you at 3 a.m. — can change the cluster, and nothing will notice or object.
@@ -27,7 +27,7 @@ GitOps *pulls*:
       │  (the cluster reads; git never reaches out)
       ▼
   Argo CD in the cluster ──▶ observe → compare → act ──▶ the cluster
-        (the same control loop as page 2, one level up)
+        (the same control loop as page 3, one level up)
 ```
 
 Four properties fall out of that inversion, and they are the actual reason
@@ -58,10 +58,12 @@ live:
 | **api-server** | the API behind the web UI and the `argocd` CLI |
 | **redis** | a cache for rendered manifests and cluster state |
 
-Note where the rendering happens: **in the cluster, by repo-server**. Argo CD
-does not run `helm install`, so there is no Helm release and `helm list` shows
-nothing. It runs `helm template` and applies the result, which is why Argo CD's
-own state is the answer to "what is deployed", not Helm's.
+Note where the rendering happens: **in the cluster, by repo-server** — and with
+`helm template`, not `helm install`, so there is no Helm release at all. The
+consequences of that are set out in full on
+[page 4](04-helm.md#how-argo-cd-renders-your-chart-template-not-install); the
+short version is that Argo CD's own state, not Helm's, is the answer to "what is
+deployed".
 
 ---
 
@@ -211,12 +213,20 @@ The `argocd` CLI is installed:
 argocd version --client
 ```
 
-Everything past that needs a server, and **the Argo CD endpoint on CIRRUS is
-site-specific** — this image does not presume one. Get the server address and
-your access from the platform team or the NCAR HPC documentation, then:
+Everything past that needs a server. On CIRRUS there is one Argo CD per cluster:
+
+| cluster | Argo CD |
+| --- | --- |
+| `mlc1` (Mesa Lab) | <https://mlc1-argo.k8s.ucar.edu/> |
+| `nwc1` (NWSC) | <https://nwc1-argo.k8s.ucar.edu/> |
+
+Access is **read-only and granted per project** — ask for it in your onboarding
+ticket, with the project name and the UCAR email addresses that need it. That is
+enough to watch sync status, resource health, events and logs, and not enough to
+change configuration, which is the right split.
 
 ```bash notebook-skip
-argocd login <argocd-server>            # SSO, or --sso, depending on the install
+argocd login mlc1-argo.k8s.ucar.edu --sso    # or nwc1-argo.k8s.ucar.edu
 argocd app list
 argocd app get hello
 argocd app diff hello                   # what git wants vs what is running
@@ -235,11 +245,13 @@ before you make it.*
 
 Most people meet Argo CD through its UI, and it is genuinely the better first
 tool: the resource tree makes the Deployment → ReplicaSet → Pod ownership from
-page 2 visible, and clicking a pod gets you its logs and events without a
+[page 3](03-kubernetes.md) visible, and clicking a pod gets you its logs and events without a
 command. Sync, diff, history and rollback are all there.
 
-If it is not published at a URL, reach it the same way you reached your own
-Service on page 2:
+The UI is published at the addresses above, so from a browser on the UCAR network
+you simply open it. For a self-hosted Argo CD with no published address, the
+fallback is the same trick you used for your own Service on
+[page 3](03-kubernetes.md):
 
 ```bash notebook-skip
 kubectl port-forward svc/argocd-server -n argocd 8080:443
@@ -250,9 +262,143 @@ then open `https://localhost:8080` — from a session terminal that address is t
 published.
 
 Note that `argocd app sync` and `argocd app rollback` are both, strictly,
-escape hatches. In a healthy GitOps setup you change git and let the controller
-act. Reaching for the CLI to change the cluster is how the repository stops
-being the truth.
+escape hatches — and with read-only access on CIRRUS you will not have them
+anyway. In a healthy GitOps setup you change git and let the controller act.
+Reaching for the CLI to change the cluster is how the repository stops being the
+truth.
+
+---
+
+## Onboarding an application on CIRRUS
+
+Everything above is Argo CD in general. This is the part that is specific to
+CIRRUS, and it is short: **you do not create the Application object; the CIRRUS
+team does.** Argo CD runs in a namespace you cannot write to, which is the
+correct arrangement — an Application can name any destination in the cluster, so
+being able to create one is close to being an administrator.
+
+What you do is: get the chart into a repository, then ask.
+
+### What to have ready
+
+```
+your-repo/
+├── app/                      your application code
+├── Dockerfile
+├── helm/                     ← the path you will name in the ticket
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   └── templates/
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       └── ingress.yaml
+└── .github/workflows/
+    └── build.yaml            builds the image, pins the tag in values.yaml
+```
+
+Four things in the ticket, and getting them right first time saves a round trip:
+
+| what they need | notes |
+| --- | --- |
+| the **repository URL** | Argo CD must be able to read it. A private repo needs credentials arranged. |
+| the **branch** | `main` for a single environment; see *test and production* below |
+| the **Helm chart folder** | the directory containing `Chart.yaml` — `helm/`, `k8s/`, whatever you called it |
+| the **URL you want** | must be unique and end in `.k8s.ucar.edu`, and say whether it should be reachable **internally (UCAR network / VPN) or externally (public internet)** |
+
+Mention at the same time, if they apply, so they are set up in one pass rather
+than three:
+
+* **secrets** — the names, and the OpenBao path and property for each
+  ([page 6](06-secrets.md))
+* **storage** — a PVC, its size, and whether it needs `ReadWriteMany`
+  ([page 7](07-storage.md))
+* **read-only Argo CD access** for you and your colleagues, with UCAR email
+  addresses — so you can watch syncs without being able to change anything
+* **alerting** — which application, and which addresses (below)
+
+The forms are at <https://cirrus.k8s.ucar.edu/request-app>, or the New Service
+Request in Jira. The team reviews the chart, creates the Application, and wires
+up monitoring, logging and alerting. Expect a day or two.
+
+### Test and production from one repository
+
+The recommended shape, and it is worth setting up before you need it: a second
+branch with its own chart folder and its own FQDN.
+
+| | production | test |
+| --- | --- | --- |
+| branch | `main` | `test` |
+| chart folder | `helm/app-helm` | `helm/app-helm-test` |
+| FQDN | `app.k8s.ucar.edu` | `test-app.k8s.ucar.edu` |
+
+Two Applications, tracking different branches. Changes land in `test`, get looked
+at through a real URL, and then merge. It costs one extra ticket at the start and
+it is the difference between "deploying is routine" and "deploying is an event".
+
+---
+
+## What Argo CD owns, and what you can still touch
+
+Once your application is onboarded, the rule is short and worth internalising
+because breaking it produces confusing rather than dramatic failures: **anything
+Argo CD created belongs to Argo CD.**
+
+With `selfHeal: true`, a change you make by hand to a managed object survives
+until the next reconcile — up to about three minutes — and is then reverted. With
+`prune: true`, deleting a file from git deletes the object. Neither is an error
+condition; both are the loop doing its job.
+
+| you want to | how |
+| --- | --- |
+| change replicas, image tag, env var, resources | edit the values file, commit, push |
+| roll back | `git revert`, push |
+| add an Ingress, a PVC, an ExternalSecret | add the template, commit, push |
+| **read** anything at all | `kubectl get/describe/logs`, `stern`, freely |
+| restart a Deployment | `kubectl rollout restart` — safe; it changes an annotation, not the spec |
+| delete a wedged pod | safe; the ReplicaSet makes another and git is unchanged |
+| port-forward to debug | safe; changes nothing |
+| scale for ten minutes to test something | it will be reverted. Change git, or accept that. |
+| `kubectl edit` a managed object | do not. It will be reverted, and you will spend the interval confused. |
+| `helm upgrade` a managed release | do not — see [page 4](04-helm.md#uninstall-before-you-hand-it-over) |
+
+Note the pattern in the safe list: **reads are always fine, and so is anything
+that acts on a pod rather than on a spec.** Killing a pod, restarting a rollout,
+exec'ing in to look around — none of those contradict git. Editing the desired
+state outside git is the only thing that does.
+
+There is one category worth calling out because the fight is invisible: a field
+that something else in the cluster legitimately owns. A
+HorizontalPodAutoscaler changes `replicas`; if `replicas` is also in git with
+`selfHeal: true`, the two overwrite each other forever. Remove the field from git
+and let the autoscaler own it. The same applies to anything a mutating webhook
+injects.
+
+---
+
+## Alerts and notifications
+
+An application nobody is watching is an application whose outage you hear about
+from a user. Two separate mechanisms, and it is worth knowing which one you are
+asking for.
+
+**Argo CD notifications** tell you about *delivery*: a sync failed, an
+application went `Degraded`. Ask for these when you onboard — the team wires up
+alerts on sync failure and unhealthy state to the addresses you name. This is the
+one to have on from day one, because it is what tells you a push did not land.
+
+**Prometheus alerts** tell you about *behaviour*: the pod is down, memory is at
+90% of its limit, your error rate has tripled. These you write yourself, as two
+manifests in your own chart, and they are covered on
+[page 9](09-observability.md#alerting-on-your-own-application). The short version:
+a `PrometheusRule` says what condition matters, an `AlertmanagerConfig` says where
+the notification goes.
+
+One piece of hard-won advice from the CIRRUS documentation, worth repeating here
+because it will save you a day: **Alertmanager is not exposed to users.** You
+cannot open its UI or read its logs to find out why a notification did not
+arrive. So when you set alerting up, start with a rule that always fires —
+`expr: vector(1)` — confirm the mail actually reaches you, and only then write the
+real conditions and delete the test rule.
 
 ---
 
@@ -275,11 +421,12 @@ before the Deployment. Lower numbers first.
 proper — the standard home for database migrations.
 
 **Secrets.** Git is public-ish and Kubernetes Secrets are base64, so plaintext
-secrets in git are simply out. The three real answers: **Sealed Secrets**
-(encrypt to a key only the cluster holds, commit the ciphertext), **External
-Secrets Operator** (commit a *reference*, the operator fetches from Vault or a
-cloud secret store), **SOPS** with the Argo CD plugin. All three share a shape:
-what is in git is useless without something the cluster has.
+secrets in git are simply out. The three general answers are **Sealed Secrets**
+(encrypt to a key only the cluster holds, commit the ciphertext), the **External
+Secrets Operator** (commit a *reference*, the operator fetches from a secret
+store), and **SOPS** with an Argo CD plugin. All three share a shape: what is in
+git is useless without something the cluster has. **CIRRUS uses the second one**,
+backed by OpenBao — [page 6](06-secrets.md).
 
 ---
 
@@ -310,6 +457,12 @@ Worth saying, because it is oversold:
 4. What does `prune: false` cost you when someone deletes a manifest from git?
 5. You put a Deployment's `replicas` in git with `selfHeal: true`, and also
    installed an HPA for it. What happens, and what is the fix?
+6. Four things go in an onboarding ticket. Name them.
+7. Which of these are safe on an Argo-managed application, and why:
+   `kubectl delete pod`, `kubectl rollout restart`, `kubectl scale`,
+   `kubectl logs`?
+8. Your notification never arrived and you cannot read Alertmanager's logs. What
+   should you have done first?
 
 ---
 
@@ -322,4 +475,4 @@ it to Harbor, and Argo CD deploying it — and both are listed under
 
 ---
 
-← [3. Helm](03-helm.md) · next: [5. CIRRUS itself](05-cirrus.md)
+← [4. Helm](04-helm.md) · next: [6. Secret Manager](06-secrets.md)

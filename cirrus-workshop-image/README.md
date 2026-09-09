@@ -263,9 +263,27 @@ To try it:
 ## The introduction material
 
 `content/` in this directory is the workshop text: a main page (`README.md`) and
-`intro/` with one page each for containers, Kubernetes, Helm, Argo CD, CIRRUS
-itself, and troubleshooting. It is baked into the image at `/opt/cirrus/content`,
-so the pages and the tool versions they describe ship as one artifact.
+`intro/` with eleven pages plus troubleshooting. It is baked into the image at
+`/opt/cirrus/content`, so the pages and the tool versions they describe ship as
+one artifact.
+
+The order is the delivery order, and it is deliberate — orientation before
+tooling, then the four things every deployment is built on, then the platform
+services:
+
+| | page | notebook? |
+| --- | --- | --- |
+| 1 | `01-orientation.md` — what CIRRUS is, the two sites, CIRRUS vs Casper/Derecho, access, namespaces, the services included | yes |
+| 2 | `02-containers.md` — containers, and Harbor including scans and SBOMs | yes |
+| 3 | `03-kubernetes.md` — kubectl, namespaces, Pod/Deployment/Service/Ingress/ConfigMap/Secret/PVC | yes |
+| 4 | `04-helm.md` — charts, `template`, testing locally, and handing over to Argo CD | yes |
+| 5 | `05-argocd.md` — GitOps, onboarding on CIRRUS, ownership, notifications | yes |
+| 6 | `06-secrets.md` — OpenBao, SecretStore, ExternalSecret | no |
+| 7 | `07-storage.md` — PVCs and storage classes, GLADE, S3 | no |
+| 8 | `08-github-actions.md` — scale sets, BuildKit, CI best practice | no |
+| 9 | `09-observability.md` — Grafana, Loki, Prometheus, alerting | no |
+| 10 | `10-workloads.md` — Jupyter, Fission, MPI operator, LLM services | no |
+| — | `99-troubleshooting.md` | no |
 
 ### Two editions, one source
 
@@ -276,8 +294,11 @@ arrangement — two hand-maintained copies of the same lesson drift within a wee
 and a build artifact cannot. It also makes settling on one edition cheap: stop
 generating, or stop shipping the `.md`, and nothing has to be reconciled.
 
-`99-troubleshooting.md` has no notebook edition. It is a lookup table, not a
-walkthrough, and a notebook of it would only be a worse way to read it.
+Only pages 1 to 5 get a notebook edition — those are the walkthroughs, and
+`PAGES` in `md2ipynb.py` is the list. Pages 6 to 10 and `99-troubleshooting.md`
+are reference material: a web UI, a ticket, or a manifest you commit rather than
+a command you run, so a notebook of one would only be a worse way to read it.
+Adding a page to `PAGES` is how that changes.
 
 Markdown is the right source because it renders in **both** editors with no
 extension at all. Notebooks needed something added: code-server's built-in
@@ -450,9 +471,17 @@ kubectl get pod "$(hostname)" -o jsonpath='{.spec.containers[0].image}'
 — rather than a Docker Hub reference, so nothing depends on the cluster having a
 route to the public internet, and nothing in the material has to be edited when
 the image is retagged. The Helm page works from a local chart for the same
-reason, and the Argo CD page does not presume a server endpoint, because there is
-no site-wide one to hardcode. The deeper hands-on workshops it hands off to are
-linked from the main page.
+reason. The deeper hands-on workshops it hands off to are linked from the main
+page, along with `NCAR/cirrus-examples`, which is where the later pages send
+people for chart templates rather than reproducing them.
+
+The later pages do name site-specific things — the two Argo CD endpoints, the
+Harbor, OpenBao, Grafana, JupyterHub, S3 and FaaS hostnames, the `ceph-kubepv`
+and `cephfs` storage classes, the `traefik-internal`/`traefik-external` ingress
+classes. Those are stable enough to be worth stating plainly rather than
+gesturing at, and they are all sourced from the NCAR HPC documentation and
+<https://cirrus.k8s.ucar.edu/>. They are the lines to re-check when that
+documentation changes.
 
 ## Home directory isolation
 

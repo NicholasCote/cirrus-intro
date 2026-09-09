@@ -84,7 +84,7 @@ kubectl auth can-i <verb> <resource>
 ```
 
 Anything outside your own namespace will be forbidden, by design — see
-[page 5](05-cirrus.md#your-namespace-and-the-fence-around-it).
+[page 3](03-kubernetes.md#your-namespace-and-what-you-may-do-in-it).
 
 ---
 
@@ -194,24 +194,207 @@ git config --global user.email "you@ucar.edu"
 
 ## A pod is not Running
 
-Work down this list; the answer is almost always in `describe`.
+Start here, always. **The answer is in `describe`**, in the Events section at the
+bottom, and the whole of the rest of this section is elaboration on that:
 
 ```bash
 kubectl get pods
-kubectl describe pod <name>          # read the Events section at the bottom
+kubectl describe pod <name>          # read the Events at the bottom
 kubectl logs <name>
 kubectl logs <name> --previous       # if it restarted
 ```
 
 | status | cause | fix |
 | --- | --- | --- |
-| `Pending` | no node can satisfy `requests`, or quota is exhausted | lower `requests`; `kubectl describe resourcequota` |
-| `ImagePullBackOff` | wrong reference, or the cluster cannot reach that registry | check the exact string; prefer `hub.k8s.ucar.edu` |
+| `Pending` | nothing can satisfy `requests`, or quota is exhausted | below |
+| `ImagePullBackOff` | wrong reference, or unreachable registry | below |
 | `ErrImagePull` + `TooManyRequests` | Docker Hub anonymous rate limit | push to Harbor and pull from there |
-| `CrashLoopBackOff` | the container starts and exits | `logs --previous`; usually the command is wrong or PID 1 exits |
-| `OOMKilled` | over `limits.memory` | raise the limit, or use less |
+| `CrashLoopBackOff` | the container starts and exits | below |
+| `OOMKilled` | over `limits.memory` | raise the limit, or use less memory |
 | `Running` but not `Ready` | readiness probe failing | `describe` shows the probe's error; check path and port |
+| `ContainerCreating`, stuck | usually a volume that cannot attach | below, under *quota and volumes* |
 | `Completed` | the command returned | fine for a Job, wrong for a server — your process is not staying up |
+
+### `ImagePullBackOff`
+
+The kubelet could not fetch the image. `describe` names which of these it is:
+
+```bash
+kubectl describe pod <name> | grep -A5 Events
+```
+
+* **`not found` / `manifest unknown`** — the reference is wrong. Check it
+  character by character: registry, project, repository, tag. A tag that does not
+  exist looks identical to a typo. Confirm in Harbor's UI that the tag is
+  actually there.
+* **`unauthorized`** — a private Harbor project with no pull secret, or an expired
+  one. Ask for the pull secret to be added to your namespace.
+* **`TooManyRequests`** — Docker Hub's anonymous rate limit. Mirror the image into
+  `hub.k8s.ucar.edu` and pull from there. This is also the answer to "pulls are
+  extremely slow".
+* **`no such host` / a timeout** — the cluster has no route to that registry.
+  Prefer Harbor; it is on the local network.
+* **It pulled yesterday and not today** — someone deleted or re-tagged the image.
+  A reference by digest cannot have this happen; a floating tag can.
+
+### `CrashLoopBackOff`
+
+The container is starting and exiting, and Kubernetes is restarting it with an
+increasing back-off. The *pod* is not broken — your process is. Its last words
+are the answer:
+
+```bash
+kubectl logs <name> --previous       # THE command here: the container that died
+kubectl describe pod <name> | grep -i -A3 'last state'
+```
+
+In rough order of frequency:
+
+* **The command or entrypoint is wrong.** Wrong path, missing interpreter,
+  arguments the program does not accept. `--previous` shows the error.
+* **A missing environment variable or config.** The process starts, fails to find
+  what it needs, exits non-zero. The fix is a ConfigMap or an ExternalSecret,
+  not a restart.
+* **The process is not staying in the foreground.** A server that daemonises and
+  returns leaves PID 1 exited, so the container is `Completed` or looping. Run it
+  in the foreground; that is what containers want.
+* **`OOMKilled` between restarts.** Check `Last State` in `describe`. Startup
+  memory spikes are easy to miss because average usage looks fine.
+* **A dependency is not up yet.** A database that is not ready, and the process
+  exits rather than retrying. Restarting *is* the retry, so this one self-heals —
+  if it does not settle within a minute or two, it is not this.
+
+If the container dies too fast to inspect, override the command to keep it alive
+and go and look:
+
+```bash notebook-skip
+kubectl run debug --rm -it --image=<your image> --command -- bash
+```
+
+### `Pending`, quota, and volumes
+
+`Pending` means nothing has been scheduled. Two families of cause, and
+`describe` distinguishes them:
+
+```bash
+kubectl describe pod <name> | tail -20     # the scheduler explains itself here
+kubectl describe resourcequota
+kubectl get limitrange -o yaml
+```
+
+* **"Insufficient cpu" / "Insufficient memory"** — no node has room for your
+  `requests`. Requests are a reservation, not a prediction: asking for 32 GB
+  because it might be needed means waiting for a node with 32 GB free. Ask for
+  what you use.
+* **`exceeded quota`, at *creation* time** — the namespace is full. This one is
+  rejected outright with a message naming the quota, which is friendlier than it
+  looks. `kubectl describe resourcequota` shows used against hard for every
+  counted thing, **including storage and object counts** — a forgotten PVC or a
+  pile of completed Jobs can exhaust a quota with nothing running.
+* **A LimitRange rejection** — the manifest has no `requests`/`limits`, or asks
+  for more than a single object may. The message names the LimitRange. Add the
+  fields; every manifest in this material has them for exactly this reason.
+* **Stuck in `ContainerCreating` with a volume in the events** — a
+  `ReadWriteOnce` PVC already attached to another node. This is the multi-replica
+  RWO trap from [page 7](07-storage.md#access-modes-are-the-decision-that-matters).
+  One writer, or `ReadWriteMany`.
+
+Clean up before asking for more quota; it is usually enough:
+
+```bash
+kubectl delete pod --field-selector=status.phase==Succeeded
+kubectl get pvc                     # anything bound and unused?
+helm list                           # any releases you forgot?
+```
+
+---
+
+## Nothing reaches my application
+
+Debug **backwards**, from the outside in. Each step tells you whether to keep
+going out or start looking in:
+
+```bash
+kubectl get ingress                                   # 1. does the rule exist
+kubectl get svc <name>                                # 2. does the Service exist
+kubectl get endpointslices -l kubernetes.io/service-name=<name>   # 3. ANY endpoints?
+kubectl get pods -l <your selector>                   # 4. are pods Ready
+kubectl port-forward deploy/<name> 8080:8080          # 5. does the app answer at all
+```
+
+Step 3 is where the answer usually is. **An empty endpoint list means the Service
+matches nothing**, and there are only two reasons: the selector does not match
+the pod labels (a typo, or the labels changed), or the pods are running but not
+`Ready` — an unready pod is deliberately kept out of the endpoint list.
+
+A 503 from the Ingress with a healthy-looking Ingress object is this, every time.
+Symptom-to-cause:
+
+| what you see | where to look |
+| --- | --- |
+| Ingress 404 | the host or path in the rule does not match the request |
+| Ingress 503 | Service has no endpoints — step 3 |
+| works via `port-forward`, not via the Service | `targetPort` does not match `containerPort` |
+| works in-cluster, not from outside | `ingressClassName` — `traefik-internal` needs the UCAR network |
+| certificate warning | cert-manager has not issued yet, or the `secretName` is wrong |
+| the app answers `127.0.0.1` only | it is bound to loopback — bind to `0.0.0.0` |
+
+---
+
+## Argo CD says `OutOfSync` and will not settle
+
+```bash notebook-skip
+argocd app diff <app>                   # or the UI's DIFF button
+```
+
+* **A hand-edited object.** With `selfHeal: true` it is reverted, but if something
+  keeps re-editing it the loop never converges. The usual culprit is a field
+  something else owns — an HPA writing `replicas`, or a mutating webhook adding
+  something. Remove that field from git.
+* **A manifest outside `templates/`.** Argo CD renders the chart; a file next to
+  `Chart.yaml` is not part of it and is silently ignored.
+* **A release you never uninstalled.** Two owners for one Deployment —
+  [page 4](04-helm.md#uninstall-before-you-hand-it-over).
+* **`Synced` and `Degraded` together** is not a delivery problem: git got exactly
+  what it asked for, and what it asked for is broken. Read the pod logs.
+* **Nothing happens after a push.** The default reconcile interval is three
+  minutes. Wait, then look.
+
+## I pushed a new image and nothing changed
+
+Two independent causes, and it is usually the first:
+
+1. **The tag did not change.** `:latest`, or any reused tag. Kubernetes will not
+   re-pull an unchanged tag and Argo CD will not sync unchanged text. Use a
+   commit SHA — [page 2](02-containers.md#tags-say-which-build).
+2. **The chart was not updated.** CI pushed the image but nothing edited
+   `values.yaml`, so git still names the old tag and the cluster is correct to
+   keep running it — [page 8](08-github-actions.md#closing-the-loop-to-argo-cd).
+
+## My ExternalSecret produces nothing
+
+```bash notebook-skip
+kubectl get externalsecret <name> -o yaml | tail -20     # status and conditions
+kubectl get secretstores -o name
+```
+
+* **The wrong `secretStoreRef.name`.** The store's name varies by namespace —
+  `user-ro` in the example chart, `openbao-backend` in the docs. Read it from your
+  own namespace rather than copying.
+* **The path or property does not exist.** Both are case-sensitive and the path
+  includes your full email address.
+* **The store's own credential expired.** If it worked for months and then
+  stopped, check the token at `you@ucar.edu/bao` in OpenBao —
+  [page 6](06-secrets.md#authentication-how-the-cluster-gets-in).
+* **The Secret updated and the pods did not.** Expected: an env var is read once
+  at start. Restart the Deployment, or mount the Secret as a file.
+
+## An alert never arrived
+
+You cannot read Alertmanager's logs on CIRRUS, so this is diagnosed by
+elimination — and it is much easier if you tested with an always-firing rule
+first. [Page 9](09-observability.md#when-an-alert-does-not-arrive) has the
+ordered list.
 
 ---
 
@@ -235,7 +418,7 @@ keeps them current without anyone copying anything.
 If you want to annotate them, copy first:
 
 ```bash
-cp ~/cirrus-workshop/intro/02-kubernetes.md ~/cirrus-workshop/my-notes.md
+cp ~/cirrus-workshop/intro/03-kubernetes.md ~/cirrus-workshop/my-notes.md
 ```
 
 Anything else in `~/cirrus-workshop/` is on your GLADE home and persists. If you
@@ -253,7 +436,7 @@ and Derecho logins outright — different glibc, different CPU features.
 
 For something you need every session, build a venv on your GLADE home from a
 Casper or Derecho login and activate it here. For something you need in a
-*deployed* workload, put it in an image ([page 1](01-containers.md)).
+*deployed* workload, put it in an image ([page 2](02-containers.md)).
 
 ---
 
@@ -284,4 +467,4 @@ Plus what you chose for **Editor** and **Shell** on the launch form.
 
 ---
 
-← [Start here](../README.md) · [5. CIRRUS itself](05-cirrus.md)
+← [Start here](../README.md) · [1. Orientation](01-orientation.md)

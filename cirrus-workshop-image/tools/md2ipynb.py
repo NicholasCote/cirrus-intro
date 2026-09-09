@@ -8,9 +8,9 @@ rather than reconciling two hand-maintained copies.
     md2ipynb.py <src-dir> <dst-dir>
 
 Every ``NN-name.md`` in src-dir whose prefix is in PAGES becomes
-``NN-name.ipynb`` in dst-dir. Anything else is left alone -- the troubleshooting
-page is a lookup table, not a walkthrough, and a notebook of it would only be a
-worse way to read it.
+``NN-name.ipynb`` in dst-dir. Anything else is left alone -- the later pages and
+the troubleshooting page are lookup tables rather than walkthroughs, and a
+notebook of one would only be a worse way to read it.
 
 Conversion rules
 ----------------
@@ -48,12 +48,17 @@ import sys
 
 # prefix -> (working subdirectory relative to $CIRRUS_WORKDIR or None,
 #            whether the page's commands need $IMG)
+#
+# Only the five walkthrough pages are here. Pages 6 to 10 are reference material
+# about platform services -- their content is a web UI, a ticket, or a manifest
+# you commit rather than a command you run -- so a notebook of one would be a
+# worse way to read it, exactly as with 99-troubleshooting.
 PAGES = {
-    "01": (None, True),
-    "02": ("k8s", True),
-    "03": ("helm", True),
-    "04": ("gitops", True),
-    "05": (None, False),
+    "01": (None, False),
+    "02": (None, True),
+    "03": ("k8s", True),
+    "04": ("helm", True),
+    "05": ("gitops", True),
 }
 
 FENCE = re.compile(r"^```([^\n]*)\n(.*?)^```[ \t]*$", re.S | re.M)
@@ -184,7 +189,10 @@ def convert(src_path, dst_path):
     if m:
         title = m.group(1)
 
-    # Sibling links point at the notebook edition where one exists.
+    # Sibling links point at the notebook edition where one exists. Only bare
+    # links are rewritten: an anchored link (`](03-kubernetes.md#secrets)`) is
+    # left pointing at the Markdown edition on purpose, because a heading anchor
+    # resolves reliably in a rendered page and not in a notebook.
     def relink(mo):
         target = mo.group(1)
         pre = target.split("-", 1)[0]

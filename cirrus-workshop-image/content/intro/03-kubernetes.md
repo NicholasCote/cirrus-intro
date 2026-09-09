@@ -1,8 +1,8 @@
-# 2. Introduction to Kubernetes
+# 3. Introduction to Kubernetes
 
-← [Containers](01-containers.md) · next: [Helm](03-helm.md)
+← [Containers](02-containers.md) · next: [Helm](04-helm.md)
 
-Page 1 was one container, running because something started it. Kubernetes is
+[Page 2](02-containers.md) was one container, running because something started it. Kubernetes is
 what you use when you want *many* containers, running because you said they
 should be, and staying that way without you watching.
 
@@ -34,11 +34,81 @@ recreated elsewhere. Nobody scripted that recovery; it falls out of the loop.
 
 This is why Kubernetes is *declarative*, and why `kubectl apply -f` on a file
 you keep in git is the way to use it, rather than a series of imperative
-commands nobody can reconstruct later. Hold that thought until page 4.
+commands nobody can reconstruct later. Hold that thought until [page 5](05-argocd.md).
 
 ---
 
-## Your namespace
+## `kubectl`, and the kubeconfig behind it
+
+`kubectl` is a client for one HTTPS API. That is worth saying plainly, because
+almost every confusing thing about it follows from it: `kubectl get pods` is a
+`GET`, `kubectl apply` is a `PATCH`, and anything that looks like magic is a
+controller on the other end.
+
+What it needs to make that call — the server address, the CA to trust, and how to
+prove who you are — lives in a **kubeconfig**. Look at yours:
+
+```bash
+echo "$KUBECONFIG"
+kubectl config view                   # credentials are redacted
+kubectl config get-contexts
+```
+
+Three nested pieces, and naming them makes the error messages legible:
+
+| piece | what it holds | when it is wrong |
+| --- | --- | --- |
+| **cluster** | the API server URL and its CA certificate | connection refused, or a TLS error |
+| **user** | how to get a credential — here, an `exec` block that runs `kubelogin` | `Unauthorized`, or a sign-in prompt that never ends |
+| **context** | a cluster + a user + a default namespace, under one name | commands land on the wrong cluster or in the wrong namespace |
+
+```bash
+kubectl config current-context
+```
+
+On CIRRUS the *user* entry does not contain a token at all. It contains an
+`exec` block: "run `kubelogin get-token` and use what it prints". That is why
+your first command of the session pauses to hand you a device code, and why the
+next one does not — the token is cached for about an hour. The mechanics and the
+reason there is no silent refresh are on
+[page 1](01-orientation.md#who-you-are-to-the-cluster).
+
+The session's kubeconfig is a **working copy** at `/tmp/cirrus/kube/config`, not
+your own file. Break it however you like; it is rebuilt next launch.
+
+### The four verbs that do the work
+
+Nearly all interactive Kubernetes is four commands, and it is worth learning them
+as a sequence rather than a list — this is the order you use them in when
+something is wrong:
+
+```bash notebook-skip
+kubectl get <kind>              # what exists, one line each
+kubectl describe <kind>/<name>  # every field, conditions, and recent Events
+kubectl logs <pod>              # what the process said
+kubectl exec -it <pod> -- bash  # go and look
+```
+
+* **`get`** answers *does it exist and what state does it claim*. Add `-o wide`
+  for nodes and IPs, `-o yaml` for the whole object, `-w` to watch it change.
+* **`describe`** is the one people under-use. Its **Events** section at the
+  bottom is where the scheduler, the kubelet and the image puller explain
+  themselves in English. A pod that is not Running has a reason and the reason is
+  printed there.
+* **`logs`** takes `--previous` for the container that just died, `-f` to follow,
+  and a Deployment instead of a pod (`kubectl logs deploy/hello`) when you do not
+  care which replica.
+* **`exec`** is a last resort and an excellent one. If the config is not what you
+  think it is, go and read it.
+
+Two more that pay for themselves: `kubectl explain <kind>.<field>` reads the
+schema out of *this* cluster's API server, so it is right for this version
+unlike a web search; and `kubectl api-resources` lists every kind the cluster
+knows, including the custom ones the platform has added.
+
+---
+
+## Your namespace, and what you may do in it
 
 A namespace is a scope for names and a boundary for policy. You have exactly
 one, and your kubeconfig already points at it:
@@ -56,7 +126,45 @@ off and looking somewhere else and you will get a `Forbidden`, which is correct:
 kubectl get pods -n kube-system     # expect: Forbidden
 ```
 
-More on the boundary and what it means on [page 5](05-cirrus.md).
+That fence is enforced by **Capsule**, the multi-tenancy layer described on
+[page 1](01-orientation.md#your-space-on-the-cluster-namespaces). You are an owner
+of your own namespace and a stranger everywhere else.
+
+Rather than guessing where the edges are, ask the API server:
+
+```bash
+kubectl auth can-i --list                  # everything you may do here
+kubectl auth can-i create deployments      # yes
+kubectl auth can-i get pods -n kube-system # no
+kubectl auth can-i create namespaces       # almost certainly no
+kubectl auth can-i list nodes              # probably no
+```
+
+`kubectl auth can-i --list` is the single most useful command on this page. It is
+answered by the server against your actual token, so it is authoritative, current
+and specific to you — no reading of policy documents required.
+
+### Quota and limit ranges
+
+Two objects constrain what you may *consume*, and both produce failures that are
+much easier to read once you know they exist:
+
+```bash
+kubectl get resourcequota
+kubectl describe resourcequota
+kubectl get limitrange
+kubectl describe limitrange
+```
+
+* A **ResourceQuota** caps the namespace in total — CPU, memory, storage, object
+  counts. Exceed it and the *creation* is rejected with a message naming the
+  quota, which is far friendlier than a pod that silently never schedules.
+* A **LimitRange** constrains individual objects and can supply defaults. If one
+  requires `requests` and `limits` on every container, a manifest without them is
+  rejected outright — which is exactly why every manifest below has them.
+
+Read the quota *before* you scale something up or ask for a large volume. `Pending`
+pods with nothing obviously wrong are usually a quota that is already full.
 
 ---
 
@@ -68,9 +176,9 @@ kubectl explain deployment.spec.replicas  # the field docs, from the server itse
 kubectl get all                           # the common kinds, in your namespace
 ```
 
-`kubectl explain` is worth the habit. It reads the schema out of the live API
-server, so it is right for *this* cluster's version — unlike a web search, which
-may describe a field that does not exist here yet or was removed.
+`kubectl get all` is a slight lie — it shows the common workload kinds and not,
+for instance, ConfigMaps, Secrets, Ingresses or PVCs. Useful as a first look;
+not an inventory.
 
 ---
 
@@ -84,7 +192,7 @@ IMG=$(kubectl get pod "$(hostname)" -o jsonpath='{.spec.containers[0].image}')
 echo "$IMG"
 ```
 
-`$(hostname)` is your pod's own name — page 1. Keep that terminal; `$IMG` is
+`$(hostname)` is your pod's own name — [page 2](02-containers.md). Keep that terminal; `$IMG` is
 used by every manifest that follows.
 
 ---
@@ -160,7 +268,7 @@ not Running has a reason, and the reason is nearly always printed there.
 
 * **`requests`** is what the scheduler reserves. It decides *where* your pod can
   fit, and a pod whose requests no node can satisfy stays `Pending` forever.
-* **`limits`** is the cgroup ceiling from page 1. Over the CPU limit you are
+* **`limits`** is the cgroup ceiling from [page 2](02-containers.md). Over the CPU limit you are
   throttled; over the memory limit you are `OOMKilled`.
 
 Requesting far more than you use wastes a shared cluster. Requesting far less
@@ -375,7 +483,117 @@ Service types, briefly: **ClusterIP** is in-cluster only and is what you want
 almost always. **NodePort** opens a high port on every node — this is how your
 own OnDemand session is reached. **LoadBalancer** asks the platform for an
 external address. Exposing something to the outside on CIRRUS is a conversation
-with the platform team, not a field you set; see [page 5](05-cirrus.md).
+with the platform team, not a field you set — and on CIRRUS the answer is
+usually an Ingress rather than a LoadBalancer.
+
+---
+
+## Ingress
+
+A Service gets you an address *inside* the cluster. An **Ingress** is how a
+hostname on the outside gets routed to it, with TLS terminated on the way.
+
+You will not be able to create one in this namespace, and you would not want to:
+the hostname has to be assigned, the certificate has to be issued, and both are
+platform-managed. But you will *write* one — it is the piece of your Helm chart
+that turns a running Deployment into a URL — so it is worth reading closely.
+
+This is the CIRRUS shape, from the platform's own
+[cirrus-examples](https://github.com/NCAR/cirrus-examples) chart:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app
+  annotations:
+    cert-manager.io/cluster-issuer: "incommon"     # who issues the certificate
+spec:
+  ingressClassName: traefik-internal               # or traefik-external
+  tls:
+    - hosts:
+        - my-app.k8s.ucar.edu                      # must end in .k8s.ucar.edu
+      secretName: incommon-cert-my-app             # where the cert is stored
+  rules:
+    - host: my-app.k8s.ucar.edu
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-app                       # the Service, by name
+                port:
+                  number: 8080
+```
+
+Four fields carry the CIRRUS-specific meaning:
+
+* **`ingressClassName`** — which of the two ingress paths you want.
+  `traefik-internal` is reachable from the UCAR network and the VPN;
+  `traefik-external` is reachable from the public internet. **This is the whole
+  public/private decision**, and it is one string. Choose deliberately, and say
+  which you want in your onboarding ticket.
+* **`host`** — your FQDN, which must be unique and must end in `.k8s.ucar.edu`.
+  ExternalDNS sees this object and creates the DNS record. You do not file a DNS
+  request.
+* **`cert-manager.io/cluster-issuer`** — cert-manager sees the annotation and the
+  `tls` block, obtains a certificate for that hostname, writes it into
+  `secretName`, and renews it before it expires. Nobody has a calendar reminder.
+* **`backend.service`** — the Service from the previous section, by name and port.
+  If the Service has no endpoints, the Ingress returns a 503 and everything
+  *looks* fine at the Ingress level. Debug backwards: Ingress → Service →
+  endpoints → pod readiness.
+
+You can still look at what exists:
+
+```bash
+kubectl get ingress
+kubectl get ingressclass 2>/dev/null || echo "not permitted to list cluster-scoped IngressClasses"
+```
+
+The mental model to keep: **Deployment runs it, Service names it, Ingress
+publishes it.** Three objects, and almost every hosted CIRRUS application is
+exactly those three plus configuration.
+
+---
+
+## PersistentVolumeClaims
+
+Everything so far vanishes with its pod. A **PersistentVolumeClaim** is how a
+workload asks for storage that does not:
+
+```bash
+kubectl get pvc
+kubectl get storageclass 2>/dev/null || echo "not permitted to list cluster-scoped StorageClasses"
+```
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+spec:
+  accessModes: ["ReadWriteOnce"]      # one node at a time
+  storageClassName: ceph-kubepv       # CIRRUS: ceph-kubepv (RWO) or cephfs (RWX)
+  resources:
+    requests:
+      storage: 5Gi
+```
+
+The claim is a *request*; a controller finds or creates a volume that satisfies
+it and binds the two. A pod then mounts the claim by name, and the pod can be
+destroyed and recreated a hundred times with the data still there.
+
+Two things to know before you write one, and both are covered properly on
+[page 7](07-storage.md):
+
+* **`accessModes` is a real constraint, not a hint.** `ReadWriteOnce` means one
+  node at a time — so a Deployment with three replicas sharing one RWO claim
+  will not do what you expect. Many readers need a `ReadWriteMany` class.
+* **Storage counts against your quota**, and a bound volume keeps counting
+  whether anything is using it. `kubectl describe resourcequota` before you ask
+  for something large.
 
 ---
 
@@ -409,7 +627,8 @@ kubectl delete pod -l app=quarantined
 
 ## Configuration: ConfigMaps and Secrets
 
-Configuration does not belong in the image. Page 1's rule — an image is
+
+Configuration does not belong in the image. [Page 2](02-containers.md)'s rule — an image is
 immutable and shared — means anything site-specific has to arrive at runtime.
 
 ```bash
@@ -445,19 +664,81 @@ ConfigMap mounted as a **volume** instead is updated in place without a restart
 (eventually — it is a periodic sync, not instant), which is the usual reason to
 prefer a file over an env var.
 
-Secrets look identical and are *not* encrypted — only base64-encoded, which is
-an encoding, not a protection. They are separate from ConfigMaps so that access
-to them can be restricted separately, and so they do not get printed by accident:
+### Secrets
+
+A Secret is a ConfigMap with two differences: the values are base64-encoded, and
+access to it can be restricted separately. Note what is *not* on that list —
+**a Secret is not encrypted.** Base64 is an encoding, not a protection, and
+anyone who can read the object can read the value:
 
 ```bash
 kubectl create secret generic hello-secret --from-literal=token=not-a-real-token
 kubectl get secret hello-secret -o jsonpath='{.data.token}' | base64 -d; echo
 ```
 
-Never commit a Secret manifest to git. That is a real problem for page 4's
-GitOps model and it has real answers — Sealed Secrets, the External Secrets
-Operator, SOPS — all of which come down to putting something in git that is
-useless without a key the cluster holds.
+It is consumed exactly like a ConfigMap — `envFrom`, or a single key by name:
+
+```yaml
+env:
+  - name: API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: hello-secret
+        key: token
+```
+
+**You should almost never write one of these by hand**, and it is worth being
+precise about why, because the reason is not "hand-editing is untidy":
+
+* **A Secret manifest cannot go in git**, and from [page 5](05-argocd.md) onwards
+  git is how everything reaches the cluster. A `data:` block is one `base64 -d`
+  away from plaintext, in a repository, in every clone, in the reflog forever.
+* **`kubectl create secret` is invisible.** It leaves no record of where the
+  value came from, who set it, or when it should be rotated. Six months later
+  nobody can answer any of those questions, and the credential is still live.
+* **It drifts.** A Secret created by hand is the one object Argo CD did not
+  install, so it survives a `prune`, misses every rotation, and quietly differs
+  between the two clusters.
+
+### ExternalSecret: the object that makes one for you
+
+The answer is to commit a *reference* rather than a value. An **ExternalSecret**
+is a custom resource that says "there is a secret at this path in the secret
+store; fetch it and keep a Kubernetes Secret in sync with it":
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: my-app-esos
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: user-ro                 # created for your namespace by the CIRRUS team
+    kind: SecretStore
+  target:
+    name: my-app-esos             # the Secret this produces
+  data:
+    - secretKey: api-token        # the key inside that Secret
+      remoteRef:
+        key: you@ucar.edu/my-app  # the path in OpenBao
+        property: api-token       # the key at that path
+```
+
+That file is safe in git: it names a location, not a credential. The External
+Secrets Operator reads it, authenticates to the store on the cluster's behalf,
+writes a real Secret into your namespace, and refreshes it on the interval. Your
+Deployment then uses `secretKeyRef` above, unchanged and unaware.
+
+```bash
+kubectl get externalsecrets 2>/dev/null || echo "no ExternalSecrets here yet"
+kubectl get secretstores    2>/dev/null || echo "no SecretStore wired into this namespace"
+```
+
+Expect both to be empty in this workshop namespace — a `SecretStore` is created
+for a project namespace when you ask for one. The store on CIRRUS is **OpenBao**,
+and the whole flow — paths, authentication, and adding an ExternalSecret to your
+chart — is [page 6](06-secrets.md).
 
 ---
 
@@ -502,7 +783,7 @@ kubectl get all
 ```
 
 Deleting by file rather than by name is the habit to build: it can only remove
-what you declared. Keep the manifests — page 3 turns them into a chart.
+what you declared. Keep the manifests — [page 4](04-helm.md) turns them into a chart.
 
 ---
 
@@ -518,8 +799,14 @@ what you declared. Keep the manifests — page 3 turns them into a chart.
 4. Why does changing a ConfigMap consumed via `envFrom` require a restart, while
    the same ConfigMap mounted as a volume does not?
 5. You edited a Deployment with `kubectl scale` and also keep it in git. What is
-   now wrong, and what does page 4 do about it?
+   now wrong, and what does [page 5](05-argocd.md) do about it?
+6. Which single field on an Ingress decides whether the world can reach your
+   application, and which object turns the hostname into DNS?
+7. Your Ingress returns 503. Name the chain of things to check, in order.
+8. Give two reasons not to run `kubectl create secret`, beyond untidiness.
+9. Which command answers "what am I actually allowed to do here", and why is it
+   more trustworthy than reading a policy?
 
 ---
 
-← [1. Containers](01-containers.md) · next: [3. Introduction to Helm](03-helm.md)
+← [2. Containers](02-containers.md) · next: [4. Introduction to Helm](04-helm.md)

@@ -83,14 +83,19 @@ handles an unknown uid itself with `nss_wrapper`.
 Not an empty file browser. The workshop material lives in the image at
 `/opt/cirrus/content`; the entrypoint installs it as `$CIRRUS_WORKDIR/README.md`
 plus `$CIRRUS_WORKDIR/intro/`, and both editors open that `README.md` — which
-links to the lessons on containers, Kubernetes, Helm, Argo CD, CIRRUS itself and
-troubleshooting.
+links to the eleven lessons and the troubleshooting page.
 
-Each lesson ships in **two editions**: `.md` to read and `.ipynb` to run. The
+The lessons are in delivery order: orientation (what CIRRUS is, the two sites,
+when to use it, how to get access), then containers, Kubernetes, Helm and Argo CD,
+then the platform services — secrets, storage, GitHub Actions, observability, and
+the specialized workloads (Jupyter, FaaS, MPI, LLM).
+
+The first five ship in **two editions**: `.md` to read and `.ipynb` to run. The
 Markdown is the source and the notebooks are generated from it at build time, so
 they cannot drift. Notebooks are runnable in both editors — that needed
 `ms-toolsai.jupyter` and `ms-python.python` added to code-server, since its
-built-in notebook support renders but cannot execute.
+built-in notebook support renders but cannot execute. The later pages are
+reference material and ship as pages only.
 
 Nothing about that is in this app's files: the material, the copies, and the two
 editors' "open this file, rendered" settings are all the image's business, and are

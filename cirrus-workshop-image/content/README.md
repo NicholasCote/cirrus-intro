@@ -62,23 +62,40 @@ should say `PASS`. If any say `FAIL`, the message names what to fix — and
 
 ## The pages
 
-Every lesson comes in two editions with the same content — **read** it as a page,
-or **run** it as a notebook. Pick whichever you prefer; they are generated from
-the same source, so neither is behind the other.
+Eleven pages, in the order the work actually happens. Every lesson through page 5
+comes in two editions with the same content — **read** it as a page, or **run** it
+as a notebook. Pick whichever you prefer; they are generated from the same source,
+so neither is behind the other.
+
+### Start here — the platform, and the four things it is built on
 
 | | lesson | read | run | what it covers |
 | --- | --- | --- | --- | --- |
-| 1 | Containers | [md](intro/01-containers.md) | [ipynb](intro/01-containers.ipynb) | What a container actually is, and how to inspect the one you are sitting in |
-| 2 | Kubernetes | [md](intro/02-kubernetes.md) | [ipynb](intro/02-kubernetes.ipynb) | Pods, Deployments, Services, ConfigMaps — written and applied by hand |
-| 3 | Helm | [md](intro/03-helm.md) | [ipynb](intro/03-helm.ipynb) | Packaging those manifests into something installable, upgradeable, and reversible |
-| 4 | Argo CD | [md](intro/04-argocd.md) | [ipynb](intro/04-argocd.ipynb) | GitOps: the cluster pulling its own desired state from a repository |
-| 5 | CIRRUS itself | [md](intro/05-cirrus.md) | [ipynb](intro/05-cirrus.ipynb) | The clusters, your namespace, what you may and may not do in it |
-| — | Troubleshooting | [md](intro/99-troubleshooting.md) | — | The failures people actually hit here |
+| 1 | Orientation | [md](intro/01-orientation.md) | [ipynb](intro/01-orientation.ipynb) | What CIRRUS is, the two sites, when to use it instead of Casper or Derecho, how to get access, and what comes with it |
+| 2 | Containers | [md](intro/02-containers.md) | [ipynb](intro/02-containers.ipynb) | What a container actually is, how to build one, and the registry that holds it — including CVE scans and SBOMs |
+| 3 | Kubernetes | [md](intro/03-kubernetes.md) | [ipynb](intro/03-kubernetes.ipynb) | `kubectl` and your namespace; Pods, Deployments, Services, Ingresses, ConfigMaps, PVCs — written and applied by hand |
+| 4 | Helm | [md](intro/04-helm.md) | [ipynb](intro/04-helm.ipynb) | Packaging those manifests into something installable, configurable and reviewable |
+| 5 | Argo CD | [md](intro/05-argocd.md) | [ipynb](intro/05-argocd.ipynb) | GitOps: the cluster pulling its own desired state from a repository, and how an application gets onboarded here |
 
-Lessons 1 through 4 build on each other: the application you deploy by hand in
-lesson 2 is the one you package in lesson 3 and hand to Argo CD in lesson 4.
-Troubleshooting is a lookup table rather than a walkthrough, so it has no
-notebook edition.
+Pages 1 through 5 build on each other, and the application you deploy by hand in
+lesson 3 is the one you package in lesson 4 and hand to Argo CD in lesson 5. If
+you read nothing else, read these.
+
+### Then — the platform services every real application needs
+
+| | lesson | read | what it covers |
+| --- | --- | --- | --- |
+| 6 | Secret Manager | [md](intro/06-secrets.md) | OpenBao: where credentials live, and how they reach a pod without ever touching git |
+| 7 | Storage | [md](intro/07-storage.md) | PVCs and storage classes, GLADE, and the on-site S3 |
+| 8 | GitHub Actions | [md](intro/08-github-actions.md) | Runner scale sets on cluster hardware, building images without a Docker daemon, and CI security |
+| 9 | Observability | [md](intro/09-observability.md) | Finding your logs and metrics in Grafana, and alerting on your own application |
+| 10 | Specialized workloads | [md](intro/10-workloads.md) | Jupyter, functions as a service, MPI, and the LLM service |
+| — | Troubleshooting | [md](intro/99-troubleshooting.md) | The failures people actually hit here |
+
+Pages 6 to 10 are reference material rather than walkthroughs — a web UI, a
+ticket, or a manifest you commit rather than a command you type — so they ship as
+pages only. Read the one you need when you need it; each is self-contained.
+Troubleshooting is a lookup table, so it has no notebook either.
 
 ### Which edition?
 
@@ -183,12 +200,18 @@ workshop on one of them, these are the CIRRUS ones, and they fit together:
 
 | workshop | what it adds |
 | --- | --- |
-| [nbviz-to-container](https://github.com/NicholasCote/nbviz-to-container) | takes a Jupyter notebook visualisation and turns it into a containerised web server — the natural sequel to [page 1](intro/01-containers.md), and the one to do first if containers are the new part |
+| [nbviz-to-container](https://github.com/NicholasCote/nbviz-to-container) | takes a Jupyter notebook visualisation and turns it into a containerised web server — the natural sequel to [page 2](intro/02-containers.md), and the one to do first if containers are the new part |
 | [k8s-argo-codespace](https://github.com/NicholasCote/k8s-argo-codespace) | Argo CD end to end against a real Flask application and Helm chart: install it, deploy through it, change a value in git and watch it sync, then break the image tag and watch it hold |
 | [gitops-harbor-workshop](https://github.com/NicholasCote/gitops-harbor-workshop) | the CI half — GitHub Actions building an image, a Harbor robot account, pushing to `hub.k8s.ucar.edu`, and Argo CD picking it up |
 
 Each runs in a GitHub Codespace with its own cluster, so you can work through
 them without needing CIRRUS access.
+
+And one repository that is not a workshop but is the thing you will actually copy
+from: **[NCAR/cirrus-examples](https://github.com/NCAR/cirrus-examples)** — the
+platform's own Helm charts for a web application, a service, Ceph and NFS
+volumes, PostgreSQL, Dask, OpenBao secrets and Prometheus alerts. Every page from
+6 onwards points at one of them.
 
 ---
 
@@ -200,6 +223,10 @@ them without needing CIRRUS access.
   environment produces.
 * NCAR HPC documentation:
   <https://ncar-hpc-docs.readthedocs.io/en/latest/compute-systems/cirrus/>
+* The CIRRUS site — status, applications, architecture, and the request forms:
+  <https://cirrus.k8s.ucar.edu/>
+* A ticket, for anything that needs the team: the *New Service Request* and
+  *Report Issue* forms linked from that site, or <cirrus-admin@ucar.edu>.
 * At a live workshop: ask. That is what the room is for.
 
-Ready — [Introduction to containers](intro/01-containers.md).
+Ready — [1. Orientation: what CIRRUS is](intro/01-orientation.md).

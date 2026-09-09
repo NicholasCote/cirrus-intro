@@ -1,8 +1,8 @@
-# 3. Introduction to Helm
+# 4. Introduction to Helm
 
-← [Kubernetes](02-kubernetes.md) · next: [Argo CD](04-argocd.md)
+← [Kubernetes](03-kubernetes.md) · next: [Argo CD](05-argocd.md)
 
-Page 2 left you with three YAML files and a problem. They contain the same
+[Page 3](03-kubernetes.md) left you with three YAML files and a problem. They contain the same
 strings in several places, they hard-code one environment, and installing or
 removing "the application" means remembering which files were part of it.
 
@@ -64,7 +64,7 @@ mkdir -p hello/templates
 cat > hello/Chart.yaml <<'EOF'
 apiVersion: v2
 name: hello
-description: The page-2 application, packaged
+description: The page-3 application, packaged
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
@@ -105,7 +105,7 @@ resources:
     memory: 256Mi
 EOF
 
-# Same trick as page 2: the image your own session runs, split into repo and tag.
+# Same trick as page 3: the image your own session runs, split into repo and tag.
 IMG=$(kubectl get pod "$(hostname)" -o jsonpath='{.spec.containers[0].image}')
 sed -i "s|IMAGE_REPO|${IMG%:*}|; s|IMAGE_TAG|${IMG##*:}|" hello/values.yaml
 grep -A3 '^image:' hello/values.yaml
@@ -204,7 +204,7 @@ Four template features carry the weight:
 | `.Values.x` | the merged values — defaults overridden by whatever the user passed |
 | `.Release.Name` / `.Release.Namespace` | who is installing this, and where. Using `.Release.Name` in object names is what lets the same chart install twice side by side |
 | `.Chart.Name` / `.Chart.Version` | from `Chart.yaml` |
-| `| quote`, `| toYaml`, `| nindent N` | pipeline functions from Sprig |
+| `\| quote`, `\| toYaml`, `\| nindent N` | pipeline functions from Sprig |
 
 `{{- toYaml .Values.resources | nindent 12 }}` deserves a closer look, because it
 is the idiom you will copy most and the one that breaks most often. Helm
@@ -339,7 +339,7 @@ Later wins:
 3. `--set` / `--set-string` / `--set-file`
 
 For anything you will run more than once, use a file, not `--set`. A values file
-is reviewable, diffable and can live in git — and page 4 needs it to.
+is reviewable, diffable and can live in git — and [page 5](05-argocd.md) needs it to.
 
 ```bash
 cat > prod-values.yaml <<'EOF'
@@ -392,6 +392,98 @@ instead.
 
 ---
 
+## The CIRRUS example charts
+
+`hello` above is deliberately minimal, so that every line of it is explainable.
+A chart for an application you actually want hosted needs three more things —
+an Ingress, a place for storage, and a place for secrets — and rather than
+inventing that shape you should start from the platform's own:
+
+**<https://github.com/NCAR/cirrus-examples>**
+
+```
+helm/
+├── web-app-helm/          a container with an internal or external URL  ← start here
+├── service-helm/          a service with no external exposure
+├── cirrus-vol-helm/       + Ceph persistent volumes (RWO and RWX)
+├── nfs-vol-helm/          + a read-only GLADE mount
+├── external-secret-helm/  + a secret from OpenBao as an env var
+├── postgres-helm/         a CloudNativePG cluster with TLS
+├── dask-helm/             a Dask scheduler, workers and a web app
+└── alerts-helm/           Prometheus rules and Alertmanager routing
+```
+
+Each is a normal chart — `Chart.yaml`, `values.yaml`, `templates/` — and each
+`values.yaml` is commented line by line. **`web-app-helm` is the one to read
+first**, because it is the minimum viable hosted CIRRUS application and it is
+four objects: a Deployment, a Service, an Ingress, and the values that name them.
+
+What is worth stealing from it, beyond the templates:
+
+* **The values file is the interface.** Everything a deployer needs to change —
+  image, FQDN, port, replica count, internal vs external, resource requests — is
+  at the top level of `values.yaml` with a comment. Nobody should have to open
+  `templates/` to deploy your application.
+* **`{{ .Release.Namespace }}` rather than a hardcoded namespace.** The same
+  chart then works in your test namespace and in the production one.
+* **The chart layout the platform expects.** Argo CD is pointed at a *directory*
+  in your repository, so `Chart.yaml` must be at the top of that directory and
+  every manifest must be inside `templates/`. A manifest sitting next to
+  `Chart.yaml` instead of inside `templates/` is silently ignored — this is a
+  common and mystifying first failure.
+
+Read them, then diff yours against them:
+
+```bash notebook-skip
+git clone https://github.com/NCAR/cirrus-examples ~/cirrus-workshop/cirrus-examples
+helm template my-app ~/cirrus-workshop/cirrus-examples/helm/web-app-helm \
+  --set webapp.name=my-app \
+  --set webapp.tls.fqdn=my-app.k8s.ucar.edu
+```
+
+(That clone needs a route to GitHub, which pods here may not have. The charts
+are short and readable in a browser either way.)
+
+---
+
+## Testing in your own namespace
+
+This is the step people skip, and it is the cheapest one in the whole workflow.
+Before a chart goes anywhere near git and Argo CD, it should have been installed,
+upgraded and uninstalled at least once by hand, in a namespace where breaking it
+costs nothing. Yours.
+
+The ladder, in increasing cost of being wrong:
+
+```bash
+helm lint ./hello                          # 1. is it even valid YAML and Go template
+helm template demo ./hello                 # 2. what exactly would be applied
+helm template demo ./hello | kubectl apply --dry-run=server -f -   # 3. would the API accept it
+helm install demo ./hello                  # 4. do it
+```
+
+Step 3 is the one worth adopting as a habit. `--dry-run=server` sends the
+manifests to the API server for full validation — schema, admission webhooks,
+LimitRange, quota — and creates nothing. It is how you find out that your chart
+violates the namespace's LimitRange *before* a rollout half-succeeds, and it
+catches things `helm lint` cannot possibly know about.
+
+Then, once it is running, check the things a render cannot tell you:
+
+```bash
+kubectl get all -l app.kubernetes.io/instance=demo
+kubectl describe deploy demo | tail -20      # events: did it schedule, did it pull
+kubectl logs deploy/demo --tail=20           # did it start, or start and exit
+```
+
+A chart that installs cleanly in your namespace can still be wrong for
+production — the FQDN differs, the quota differs, the secret does not exist yet.
+But a chart that does *not* install cleanly here will not install cleanly there,
+and finding that out from `helm install` takes seconds where finding it out from
+an Argo CD sync failure takes a ticket.
+
+---
+
 ## Package it
 
 ```bash
@@ -414,8 +506,67 @@ helm list
 kubectl get all
 ```
 
-Keep `~/cirrus-workshop/helm/hello/` — page 4 puts it in git and hands it to
+Keep `~/cirrus-workshop/helm/hello/` — [page 5](05-argocd.md) puts it in git and hands it to
 Argo CD.
+
+---
+
+## Handing the chart to Argo CD
+
+Two things about this transition are counter-intuitive enough that they cause a
+real, confusing failure the first time. Both are worth reading now, before
+[page 5](05-argocd.md), because they change what you should leave behind here.
+
+### Uninstall before you hand it over
+
+When Argo CD takes ownership of your chart, it will apply the same objects your
+`helm install` created. If your release is still installed, two things now
+believe they own the Deployment named `demo`, and you get some mixture of
+`OutOfSync` that will not resolve, ownership-metadata conflicts, and a `prune`
+that deletes something you did not expect.
+
+So: **`helm uninstall` first, then onboard.**
+
+```bash notebook-skip
+helm list                    # is anything of mine still installed here?
+helm uninstall demo
+kubectl get all              # confirm it is gone before Argo CD is pointed at it
+```
+
+The same applies in reverse and less obviously: once Argo CD owns an application,
+running `helm upgrade` against it by hand does not "win". It holds until the next
+reconcile, which reverts it. Change the values file in git instead.
+
+### How Argo CD renders your chart: `template`, not `install`
+
+Argo CD does **not** run `helm install`. Its repo-server runs the equivalent of
+`helm template` and applies the resulting manifests directly. That single fact
+explains a set of otherwise baffling observations:
+
+| what you notice | why |
+| --- | --- |
+| `helm list` shows nothing, but the app is running | there is no release — nothing wrote a release Secret |
+| `helm history` and `helm rollback` do not work | both read release history, which does not exist |
+| `helm get values` cannot tell you what is deployed | Argo CD's own diff is the answer instead |
+| a `helm.sh/hook` never fires | Helm hooks are a release-lifecycle feature; Argo CD has its own `argocd.argoproj.io/hook` |
+| `.Release.Name` is the Application's name | Argo CD supplies it, and it is not something you chose per-install |
+| `lookup` in a template returns nothing | rendering happens without a cluster connection |
+
+None of that is a limitation to work around; it is the model being consistent.
+**Git is the release history**, so `git revert` is the rollback, and it goes
+through the same review as the change did. Helm's own history would be a second,
+competing record of the truth — which is exactly what GitOps sets out to remove.
+
+The practical consequences for how you write the chart:
+
+* **Everything must be derivable from the chart plus its values.** No `lookup`,
+  no dependence on what happens to already exist in the namespace.
+* **`Chart.yaml` at the top of the path Argo CD is given**, and every manifest
+  inside `templates/`.
+* **Keep a values file per environment**, checked in. `--set` has nowhere to live
+  in a GitOps repository; `valueFiles` in the Application does.
+* **Bump `Chart.yaml`'s `version`** when you change templates. It is not enforced
+  here, but it is the only version number a reviewer can see.
 
 ---
 
@@ -428,7 +579,7 @@ The next `helm upgrade` will quietly correct it — or quietly not, depending on
 the field.
 
 That gap between "what I declared" and "what is actually running" is the problem
-[page 4](04-argocd.md) exists to solve.
+[page 5](05-argocd.md) exists to solve.
 
 ---
 
@@ -441,7 +592,13 @@ That gap between "what I declared" and "what is actually running" is the problem
 4. What does `--atomic` change about a failed upgrade?
 5. `helm rollback` restores the manifests of an earlier revision. Name something
    it cannot restore.
+6. Which single command validates a chart against the *live* cluster's admission
+   policy without creating anything?
+7. Your chart is synced by Argo CD and `helm list` is empty. Why is that
+   expected, and what is your rollback mechanism instead?
+8. What must you do to a hand-installed release before Argo CD is pointed at the
+   same chart, and what happens if you forget?
 
 ---
 
-← [2. Kubernetes](02-kubernetes.md) · next: [4. Introduction to Argo CD](04-argocd.md)
+← [3. Kubernetes](03-kubernetes.md) · next: [5. Introduction to Argo CD](05-argocd.md)
