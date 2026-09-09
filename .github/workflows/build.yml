@@ -10,7 +10,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-push:
@@ -30,9 +30,6 @@ jobs:
           username: ${{ secrets.HARBOR_LOGIN }}
           password: ${{ secrets.HARBOR_SECRET }}
 
-      # The image lives in a subdirectory, so the build context and the
-      # Dockerfile are both named explicitly -- everything else here is the
-      # runner's stock buildx.
       - name: Build image
         run: |
           docker buildx build \
@@ -42,3 +39,15 @@ jobs:
 
       - name: Push image to Harbor
         run: docker push hub.k8s.ucar.edu/ncote/cirrus-workshop:${{ steps.date.outputs.date }}
+
+      - name: Point submit.yml.erb at the new image
+        run: |
+          sed -i \
+            -E 's|(hub\.k8s\.ucar\.edu/ncote/cirrus-workshop:)[^"]*|\1${{ steps.date.outputs.date }}|' \
+            submit.yml.erb
+          git diff --quiet submit.yml.erb && echo "no change" && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add submit.yml.erb
+          git commit -m "Update workshop image to ${{ steps.date.outputs.date }}"
+          git push
