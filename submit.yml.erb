@@ -12,8 +12,16 @@
 
   proxy = (editor_choice == "code") ? "rnode" : "node"
 
+  # The form field is the *parent*; the workshop directory is always a
+  # cirrus-intro beneath it. OOD remembers the last submitted form values, so a
+  # saved working_dir of $HOME arrives here non-empty and the "if empty" default
+  # never fires -- which put the start page loose in the shared GLADE home, and
+  # now makes cirrus-content-pull refuse outright because a home directory full
+  # of files is not a checkout it can take over.
   workdir = working_dir.to_s.strip
-  workdir = "#{user.home}/cirrus-intro" if workdir.empty?
+  workdir = user.home.to_s if workdir.empty?
+  workdir = workdir.chomp("/")
+  workdir = "#{workdir}/cirrus-intro" unless File.basename(workdir) == "cirrus-intro"
 
   base_url_file = "base_url"
 -%>

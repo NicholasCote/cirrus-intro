@@ -40,10 +40,12 @@ attributes:
     value: ""
     required: false
     help: |
-      Absolute path the editor opens. Leave blank for `~/cirrus-intro`, which is
-      created for you and holds the workshop pages, the notebooks, and whatever
-      the lessons have you write. Only your home directory is mounted, so this
-      must be a path underneath it.
+      Where to put the workshop directory. Leave blank for your home, giving
+      `~/cirrus-intro` — which is created for you and holds the workshop pages,
+      the notebooks, and whatever the lessons have you write. A `cirrus-intro`
+      is always created under whatever you give here, so the material never
+      lands loose in a directory of your own. Only your home directory is
+      mounted, so this must be a path underneath it.
 
   cpu:
     widget: number_field

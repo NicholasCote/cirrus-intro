@@ -193,6 +193,25 @@ export HELM_DATA_HOME="${HELM_DATA_HOME:-${STATE_DIR}/helm/data}"
 # there next session.
 # ---------------------------------------------------------------------------
 export CIRRUS_WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-intro}"
+
+# Never $HOME itself. OOD remembers the last values submitted on the launch form,
+# so a working directory of $HOME saved from an earlier session arrives here as
+# CIRRUS_WORKDIR=$HOME whatever the form's own default says -- and this is the
+# directory the material is pulled into and the editor opens. Pointed at a GLADE
+# home it put the start page loose among everything already there, and once the
+# material came from git it stopped working altogether, because a home directory
+# full of files is not a checkout nbgitpuller can take over.
+#
+# submit.yml.erb shapes this too, and that is the fix that reaches a session
+# first. This is here because the image cannot assume it was launched by that
+# erb, or by that version of it.
+if [ "${CIRRUS_WORKDIR%/}" = "${HOME%/}" ]; then
+    warn "CIRRUS_WORKDIR was \$HOME (${HOME}), which cannot hold the material."
+    warn "Using ${HOME%/}/cirrus-intro instead."
+    CIRRUS_WORKDIR="${HOME%/}/cirrus-intro"
+    export CIRRUS_WORKDIR
+fi
+
 if ! mkdir -p -- "$CIRRUS_WORKDIR" 2>/dev/null; then
     warn "could not create ${CIRRUS_WORKDIR}; falling back to ${STATE_DIR}/cirrus-intro"
     warn "(files saved there do NOT persist past this session)"
