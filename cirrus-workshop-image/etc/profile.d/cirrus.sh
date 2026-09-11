@@ -58,24 +58,23 @@ export KUBECONFIG="${KUBECONFIG:-${CIRRUS_STATE_DIR}/kube/config}"
 # Via the helper, not a hardcoded path: ~/.kube/cirrus-config is preferred over
 # ~/.kube/config, and that rule lives in one place.
 export CIRRUS_KUBECONFIG_SRC="${CIRRUS_KUBECONFIG_SRC:-$(cirrus-kubeconfig-src 2>/dev/null)}"
-export CIRRUS_WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-workshop}"
+export CIRRUS_WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-intro}"
 
-# Persistence lives here, and it is NOT CIRRUS_WORKDIR: that is whatever
-# directory the editor was told to open, so deriving this from it let a working
-# directory of $HOME turn the next line into $HOME/.jupyter.
-export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/cirrus-workshop}"
+# Not inside CIRRUS_WORKDIR: that has to stay a pure checkout for the pull to
+# work. See the entrypoint.
+export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/.cirrus}"
 
 # Not /tmp: this one holds the user's JupyterLab settings, which are worth
 # keeping. Just not in $HOME/.jupyter, where the HPC sessions would see it.
-export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/.jupyter}"
+export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/jupyter}"
 
 # ---------------------------------------------------------------------------
-# The introduction pages. Exported here so that `cirrus-intro` in a terminal
-# reads the copy in the working directory -- the same files the editor's file
-# browser shows -- rather than the image's own read-only original.
+# The workshop material, which lives in CIRRUS_WORKDIR itself -- `cirrus-intro`
+# in a terminal reads the same files the editor's file browser shows. The repo
+# is here so that `cirrus-content-pull` can be re-run by hand after a failed one.
 # ---------------------------------------------------------------------------
-export CIRRUS_CONTENT_SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
-export CIRRUS_CONTENT_DIR="${CIRRUS_CONTENT_DIR:-${CIRRUS_WORKDIR}/cirrus-intro}"
+export CIRRUS_CONTENT_REPO="${CIRRUS_CONTENT_REPO:-}"
+export CIRRUS_CONTENT_BRANCH="${CIRRUS_CONTENT_BRANCH:-main}"
 export CIRRUS_START_PAGE="${CIRRUS_START_PAGE:-README.md}"
 
 # ---------------------------------------------------------------------------

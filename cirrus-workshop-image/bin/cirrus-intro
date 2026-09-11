@@ -19,26 +19,18 @@ set -uo pipefail
 
 PROG="cirrus-intro"
 
-# The seeded copies in the working directory are preferred over the image's own,
-# so that what you read is what the file browser shows. Both fall back to the
-# image when seeding was skipped (a read-only $HOME, say).
-SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
-WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-workshop}"
+# The material is pulled into the working directory, so this reads exactly the
+# files the editor's file browser shows. There is no copy in the image to fall
+# back to; if the pull has not happened, say so rather than printing nothing.
+DIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-intro}"
 START="${CIRRUS_START_PAGE:-README.md}"
 
-DIR="${CIRRUS_CONTENT_DIR:-${WORKDIR}/cirrus-intro}"
-[ -d "$DIR" ] || DIR="${SRC}/cirrus-intro"
-
-# The main page lives at the root of the working directory rather than in DIR,
-# because code-server will only open a folder's README.md on launch. It is
-# listed first regardless of where it was found.
-MAIN="${WORKDIR}/${START}"
-[ -f "$MAIN" ] || MAIN="${SRC}/${START}"
+MAIN="${DIR}/${START}"
 [ -f "$MAIN" ] || MAIN=""
 
-if [ ! -d "$DIR" ] && [ -z "$MAIN" ]; then
-    printf '%s: no introduction content found.\n' "$PROG" >&2
-    printf 'Looked under CIRRUS_WORKDIR and CIRRUS_CONTENT_SRC.\n' >&2
+if [ ! -d "$DIR" ]; then
+    printf '%s: %s does not exist.\n' "$PROG" "$DIR" >&2
+    printf "Run 'cirrus-content-pull' to install the workshop material.\n" >&2
     exit 1
 fi
 
@@ -76,7 +68,7 @@ TITLES
 
 pages() {
     [ -n "$MAIN" ] && printf '%s\n' "$MAIN"
-    find "$DIR" -maxdepth 1 -name '*.ipynb' -type f 2>/dev/null | LC_ALL=C sort
+    find "$DIR" -maxdepth 1 -name '[0-9][0-9]-*.ipynb' -type f 2>/dev/null | LC_ALL=C sort
 }
 
 usage() {
@@ -99,7 +91,8 @@ esac
 
 mapfile -t FILES < <(pages)
 if [ "${#FILES[@]}" -eq 0 ]; then
-    printf '%s: no pages in %s\n' "$PROG" "$DIR" >&2
+    printf '%s: no workshop pages in %s\n' "$PROG" "$DIR" >&2
+    printf "Run 'cirrus-content-pull' to install them.\n" >&2
     exit 1
 fi
 
@@ -159,9 +152,7 @@ fi
 # ships, rather than a second renderer here to keep in step with it. Output is
 # Markdown, not rendered Markdown: less -R keeps the formatting readable and
 # adding a real renderer would be a dependency for something both editors
-# already do better. The main page is prose already; the only thing it needs is
-# its ownership marker stripped, an HTML comment that is invisible in a rendered
-# view and noise in a pager.
+# already do better. The start page is prose already and goes out as it is.
 render() {
     case "$1" in
         *.ipynb)
@@ -174,7 +165,7 @@ render() {
             jupyter nbconvert --to markdown --stdout --log-level=ERROR "$1" 2>/dev/null
             ;;
         *)
-            sed '/^<!-- cirrus-content:/d' -- "$1"
+            cat -- "$1"
             ;;
     esac
 }

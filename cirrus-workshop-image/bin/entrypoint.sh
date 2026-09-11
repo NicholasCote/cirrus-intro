@@ -192,20 +192,26 @@ export HELM_DATA_HOME="${HELM_DATA_HOME:-${STATE_DIR}/helm/data}"
 # notebooks and manifests the user makes during the workshop should still be
 # there next session.
 # ---------------------------------------------------------------------------
-export CIRRUS_WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-workshop}"
+export CIRRUS_WORKDIR="${CIRRUS_WORKDIR:-${HOME}/cirrus-intro}"
 if ! mkdir -p -- "$CIRRUS_WORKDIR" 2>/dev/null; then
-    warn "could not create ${CIRRUS_WORKDIR}; falling back to ${STATE_DIR}/cirrus-workshop"
+    warn "could not create ${CIRRUS_WORKDIR}; falling back to ${STATE_DIR}/cirrus-intro"
     warn "(files saved there do NOT persist past this session)"
-    CIRRUS_WORKDIR="${STATE_DIR}/cirrus-workshop"
+    CIRRUS_WORKDIR="${STATE_DIR}/cirrus-intro"
     mkdir -p -- "$CIRRUS_WORKDIR"
 fi
 
-# Where workshop state persists. Deliberately NOT derived from CIRRUS_WORKDIR:
-# that is the directory the editor opens, which is a user choice on the launch
-# form, and deriving this from it meant someone who set the working directory to
-# their home turned JUPYTER_CONFIG_DIR into $HOME/.jupyter -- the shared dotfile
-# this image exists to stay out of. Two different concepts, two variables.
-export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/cirrus-workshop}"
+# Where workshop state persists, and deliberately NOT inside CIRRUS_WORKDIR.
+#
+# It used to be $HOME/cirrus-workshop, created whatever the working directory
+# was, so a session left behind a directory that looked empty because all it held
+# was a hidden .jupyter. Putting it in the working directory instead would fix
+# the clutter and break the pull: CIRRUS_WORKDIR has to be empty or a checkout
+# for nbgitpuller to clone into it, and a .jupyter written before the first pull
+# is neither -- permanently, since the next launch would find it again.
+#
+# A dotted directory of our own keeps the workshop directory a pure checkout,
+# stays out of both file browsers, and is never $HOME itself.
+export CIRRUS_PERSIST_DIR="${CIRRUS_PERSIST_DIR:-${HOME}/.cirrus}"
 if ! mkdir -p -- "$CIRRUS_PERSIST_DIR" 2>/dev/null; then
     warn "could not create ${CIRRUS_PERSIST_DIR}; settings will not persist past this session"
     CIRRUS_PERSIST_DIR="${STATE_DIR}/persist"
@@ -217,7 +223,7 @@ fi
 # holds the user's Lab settings and workspace layout. jupyter_core writes a
 # "migrated" marker into it on the very first command, so it has to be set before
 # anything Jupyter-related runs.
-export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/.jupyter}"
+export JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-${CIRRUS_PERSIST_DIR}/jupyter}"
 
 # Backstop, whoever set it and however: $HOME/.jupyter is read by the user's
 # Casper and Derecho sessions, and a config written by this image can break them.
@@ -232,211 +238,41 @@ mkdir -p -- "$JUPYTER_CONFIG_DIR" 2>/dev/null || \
     warn "could not create ${JUPYTER_CONFIG_DIR}; JupyterLab settings will not persist"
 
 # ---------------------------------------------------------------------------
-# Introduction content.
+# The workshop material.
 #
-# The material is Markdown because Markdown is the one format that renders in
-# both editors -- code-server here has no Jupyter extension, so a notebook would
-# be a JupyterLab-only document. It ships in the image and is copied into the
-# working directory at startup, because Jupyter serves nothing outside its
-# root_dir (which is CIRRUS_WORKDIR) and so cannot reach /opt/cirrus/content.
+# Pulled from git at startup rather than shipped in the image, so a correction
+# to a lesson reaches the next session without rebuilding and re-tagging.
+# CIRRUS_CONTENT_REPO is where from; see bin/cirrus-content-pull for why the
+# pull is nbgitpuller and not a clone.
 #
-# Two targets, because the two editors open a file by different means:
-#
-#   $CIRRUS_WORKDIR/$CIRRUS_START_PAGE  the main page. Named README.md so that
-#                                      code-server's workbench.startupEditor
-#                                      "readme" opens it -- code-server cannot
-#                                      be told to open an arbitrary file (see
-#                                      the code branch below), and that setting
-#                                      is the one thing that reliably can.
-#   $CIRRUS_CONTENT_DIR                the pages it links to.
+# It lands directly in CIRRUS_WORKDIR -- the directory both editors open -- so
+# the start page, the lessons, and the manifests written during a lesson are one
+# directory rather than three. Jupyter serves nothing outside its root_dir, and
+# code-server will only open a folder's README.md on launch, so both editors
+# need the material to be exactly there and nowhere else.
 # ---------------------------------------------------------------------------
-CIRRUS_CONTENT_SRC="${CIRRUS_CONTENT_SRC:-/opt/cirrus/content}"
-CIRRUS_CONTENT_DIR="${CIRRUS_CONTENT_DIR:-${CIRRUS_WORKDIR}/cirrus-intro}"
-# Relative to CIRRUS_WORKDIR, because that is what both editors need it as.
 CIRRUS_START_PAGE="${CIRRUS_START_PAGE:-README.md}"
-export CIRRUS_CONTENT_SRC CIRRUS_CONTENT_DIR CIRRUS_START_PAGE
+export CIRRUS_START_PAGE
 
-# Absolute path of the main page once installed, or empty for "do not open one".
+# Absolute path of the start page once installed, or empty for "do not open one".
 START_PAGE_PATH=""
 
-# How the copies are recognised as ours on the next launch. The directory gets a
-# stamp file, which ships inside the content so a successful copy always brings
-# it along; the main page gets a marker on its first line, since a single file
-# has nowhere to put a stamp beside it.
-CIRRUS_CONTENT_STAMP=".cirrus-content"
-CIRRUS_CONTENT_MARKER="cirrus-content:"
-
-# The pages were seeded as $CIRRUS_WORKDIR/intro until 2026-09; anyone whose
-# working directory is their GLADE home had to pick that out of everything else
-# already there. A stamped copy under the old name is one of ours, so it is
-# moved across rather than left behind as a second, stale directory -- and moved
-# rather than deleted, so that the notebook comparison in seed_intro_pages sees
-# it exactly as it would have before the rename and a half-finished page
-# survives. An *unstamped* intro/ belongs to the user and is never touched.
-#
-# Only when CIRRUS_CONTENT_DIR is the default: someone who set it themselves has
-# said where the pages go, and the old directory is not ours to move there.
-migrate_legacy_content_dir() {
-    local legacy="${CIRRUS_WORKDIR}/intro"
-
-    [ "$CIRRUS_CONTENT_DIR" = "${CIRRUS_WORKDIR}/cirrus-intro" ] || return 0
-    [ -d "$legacy" ] || return 0
-    [ -e "${legacy}/${CIRRUS_CONTENT_STAMP}" ] || return 0
-
-    if [ -e "$CIRRUS_CONTENT_DIR" ]; then
-        if rm -rf -- "$legacy" 2>/dev/null; then
-            log "removed the old ${legacy}; the pages are in ${CIRRUS_CONTENT_DIR} now"
-        else
-            warn "could not remove the old ${legacy}; its pages are out of date"
-        fi
-        return 0
-    fi
-
-    if mv -- "$legacy" "$CIRRUS_CONTENT_DIR" 2>/dev/null; then
-        log "the pages moved from ${legacy} to ${CIRRUS_CONTENT_DIR}"
-    else
-        warn "could not move ${legacy} to ${CIRRUS_CONTENT_DIR}; you may see both."
-        warn "${CIRRUS_CONTENT_DIR} is the current one -- the old directory can go."
-    fi
-}
-
-seed_intro_pages() {
-    if [ ! -d "${CIRRUS_CONTENT_SRC}/cirrus-intro" ]; then
-        warn "no introduction pages at ${CIRRUS_CONTENT_SRC}/cirrus-intro"
-        return 1
-    fi
-
-    migrate_legacy_content_dir
-
-    # A directory of that name with no stamp in it was made by the user, not by
-    # a previous launch of this image. Removing it would be destroying their
-    # work to install ours, so it is left alone and said out loud.
-    if [ -e "$CIRRUS_CONTENT_DIR" ] && [ ! -e "${CIRRUS_CONTENT_DIR}/${CIRRUS_CONTENT_STAMP}" ]; then
-        warn "${CIRRUS_CONTENT_DIR} exists but has no ${CIRRUS_CONTENT_STAMP} in it, so it was"
-        warn "not created by this image -- leaving it untouched. The pages are still"
-        warn "readable at ${CIRRUS_CONTENT_SRC}; 'cirrus-intro' finds them there."
-        return 1
-    fi
-
-    mkdir -p -- "$(dirname -- "$CIRRUS_CONTENT_DIR")" 2>/dev/null || true
-
-    # Built beside the live directory and swapped in, rather than replaced in
-    # place. The staging copy is what makes it possible to carry a notebook the
-    # user has run across the refresh -- see below -- without ever leaving the
-    # directory half-updated if something fails partway.
-    local staged="${CIRRUS_CONTENT_DIR}.new"
-    rm -rf -- "$staged" 2>/dev/null || true
-    if ! cp -a -- "${CIRRUS_CONTENT_SRC}/cirrus-intro" "$staged" 2>/dev/null; then
-        warn "could not stage the introduction pages at ${staged}"
-        warn "(is ${CIRRUS_WORKDIR} writable?). Read them with 'cirrus-intro' instead."
-        rm -rf -- "$staged" 2>/dev/null || true
-        return 1
-    fi
-
-    # The Markdown edition is derived state and is replaced outright: a merge
-    # would leave last month's page behind after it is renamed upstream.
-    #
-    # The notebook edition cannot be treated that way, because running a
-    # notebook *modifies* it -- execution counts and outputs -- so replacing it
-    # every launch would throw away the work of anyone who came back to finish a
-    # page. Instead each existing notebook is compared against the pristine copy
-    # the image shipped: byte-identical means untouched, so it takes the new
-    # version; different means the user ran or edited it, so theirs is kept.
-    # That way corrections still reach anyone who has not started a page, and
-    # nobody loses a page they have.
-    local kept="" orphaned=""
-    if [ -d "$CIRRUS_CONTENT_DIR" ]; then
-        local nb base pristine
-        for nb in "$CIRRUS_CONTENT_DIR"/*.ipynb; do
-            [ -f "$nb" ] || continue
-            base="$(basename -- "$nb")"
-            pristine="${CIRRUS_CONTENT_SRC}/cirrus-intro/${base}"
-            if [ -f "$pristine" ] && cmp -s -- "$nb" "$pristine"; then
-                continue                      # never opened; let the fresh one win
-            fi
-            if cp -f -- "$nb" "${staged}/${base}" 2>/dev/null; then
-                # No pristine counterpart means the page was renamed or dropped
-                # upstream since the notebook was run -- most often a renumbering
-                # of the material. The user's copy is still their work, so it is
-                # kept, but it is called out separately: left silent it would sit
-                # in the directory under a filename that no longer matches
-                # anything, which reads as a bug in the material.
-                if [ -f "$pristine" ]; then
-                    kept="${kept} ${base}"
-                else
-                    orphaned="${orphaned} ${base}"
-                fi
-            fi
-        done
-    fi
-
-    rm -rf -- "$CIRRUS_CONTENT_DIR" 2>/dev/null || \
-        warn "could not remove ${CIRRUS_CONTENT_DIR}; its pages may be out of date"
-    if ! mv -- "$staged" "$CIRRUS_CONTENT_DIR" 2>/dev/null; then
-        warn "could not move ${staged} into place as ${CIRRUS_CONTENT_DIR}"
-        return 1
-    fi
-
-    # Notebooks are 0644, because a notebook has to be saveable to be runnable
-    # at all -- the comparison above is what protects it from the next launch
-    # instead. Anything else that ships here is read-only, so an editor refuses
-    # to save over it rather than accepting an edit the next launch would
-    # discard. Directories stay writable either way, since the next launch has
-    # to be able to replace them.
-    find "$CIRRUS_CONTENT_DIR" -type d -exec chmod 0755 {} + 2>/dev/null || true
-    find "$CIRRUS_CONTENT_DIR" -type f -exec chmod 0444 {} + 2>/dev/null || true
-    find "$CIRRUS_CONTENT_DIR" -type f -name '*.ipynb' -exec chmod 0644 {} + 2>/dev/null || true
-
-    if [ -n "$kept" ]; then
-        log "kept your own copy of:${kept}"
-        log "  (the pristine notebooks are always at ${CIRRUS_CONTENT_SRC}/cirrus-intro)"
-    fi
-    if [ -n "$orphaned" ]; then
-        log "kept your own copy of:${orphaned}"
-        log "  -- but the material no longer ships a page under that name, so these"
-        log "  are yours alone now. 'cirrus-intro' lists the current pages; move"
-        log "  anything you want to keep up into ${CIRRUS_WORKDIR}."
-    fi
-    return 0
-}
-
-seed_start_page() {
-    local src="${CIRRUS_CONTENT_SRC}/${CIRRUS_START_PAGE}"
-    local dst="${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}"
-
-    [ -f "$src" ] || { warn "no main page at ${src}"; return 1; }
-
-    # This one lands at the root of a directory the user chose, so it is only
-    # ever overwritten when the file already there is one of ours. The marker is
-    # an HTML comment on the first line: invisible in a rendered view, and
-    # unambiguous enough that a file the user wrote cannot be mistaken for it.
-    if [ -e "$dst" ] && ! head -1 -- "$dst" 2>/dev/null | grep -qF -- "$CIRRUS_CONTENT_MARKER"; then
-        warn "${dst} already exists and is not one of ours, so it is left alone."
-        warn "The main page is readable at ${src}, or run 'cirrus-intro'."
-        return 1
-    fi
-
-    # cp -f, not cp: the previous launch left it mode 0444.
-    if ! cp -f -- "$src" "$dst" 2>/dev/null; then
-        warn "could not install the main page at ${dst} (is ${CIRRUS_WORKDIR} writable?)"
-        return 1
-    fi
-    chmod 0444 -- "$dst" 2>/dev/null || true
-    START_PAGE_PATH="$dst"
-    return 0
-}
-
-if [ "${CIRRUS_SEED_CONTENT:-1}" = "0" ]; then
-    log "CIRRUS_SEED_CONTENT=0: leaving ${CIRRUS_CONTENT_DIR} and the main page as they are"
-    [ -f "${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}" ] && START_PAGE_PATH="${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}"
+if [ "${CIRRUS_PULL_CONTENT:-1}" = "0" ]; then
+    log "CIRRUS_PULL_CONTENT=0: leaving ${CIRRUS_WORKDIR} as it is"
 else
-    seed_intro_pages || true
-    seed_start_page  || true
+    cirrus-content-pull || true
 fi
 
-if [ -z "$START_PAGE_PATH" ]; then
-    warn "no main page in ${CIRRUS_WORKDIR}; the editor will open it with nothing"
-    warn "selected. 'cirrus-intro' reads the material from a terminal either way."
+# Whatever happened above, this directory has to exist: it is JupyterLab's
+# root_dir and the folder code-server opens, and neither starts without it.
+mkdir -p -- "$CIRRUS_WORKDIR" 2>/dev/null || \
+    warn "could not create ${CIRRUS_WORKDIR}; the editor may refuse to start"
+
+if [ -f "${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}" ]; then
+    START_PAGE_PATH="${CIRRUS_WORKDIR}/${CIRRUS_START_PAGE}"
+else
+    warn "no ${CIRRUS_START_PAGE} in ${CIRRUS_WORKDIR}; the editor will open with"
+    warn "nothing selected. Retry the pull with 'cirrus-content-pull'."
 fi
 
 # ---------------------------------------------------------------------------
@@ -623,7 +459,8 @@ bootstrap)
     log "  HOME               : ${HOME}"
     log "  CIRRUS_STATE_DIR   : ${STATE_DIR}"
     log "  CIRRUS_WORKDIR     : ${CIRRUS_WORKDIR}"
-    log "  CIRRUS_CONTENT_DIR : ${CIRRUS_CONTENT_DIR}"
+    log "  CIRRUS_PERSIST_DIR : ${CIRRUS_PERSIST_DIR}"
+    log "  content repo       : ${CIRRUS_CONTENT_REPO:-<unset>} (${CIRRUS_CONTENT_BRANCH:-main})"
     log "  start page         : ${START_PAGE_PATH:-<none>}"
     log "  KUBECONFIG         : ${KUBECONFIG}"
     log "  user               : $(id -un 2>/dev/null || echo '<no passwd entry>') (uid $(id -u), gid $(id -g))"
@@ -640,7 +477,6 @@ jupyter)
         --ServerApp.port_retries=0
         --ServerApp.base_url="${BASE_URL}"
         --ServerApp.root_dir="${CIRRUS_WORKDIR}"
-        --ServerApp.preferred_dir="${CIRRUS_WORKDIR}"
         --ServerApp.open_browser=False
         --ServerApp.quit_button=False
         # Behind a reverse proxy every request arrives from a non-local address
@@ -676,8 +512,9 @@ jupyter)
 
     # Open the start page instead of an empty file browser. default_url is a
     # path under base_url, and /lab/tree/<p> resolves <p> against root_dir --
-    # which is CIRRUS_WORKDIR. A start page outside the workdir cannot be served
-    # at all, so it is dropped rather than turned into a 404 on first load.
+    # which is CIRRUS_WORKDIR, the directory the material was pulled into. A
+    # start page outside it cannot be served at all, so it is dropped rather
+    # than turned into a 404 on first load.
     #
     # It opens *rendered* because the image ships a defaultViewers override
     # pointing markdown at "Markdown Preview"; see the Dockerfile.

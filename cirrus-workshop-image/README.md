@@ -89,8 +89,9 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_KUBECONFIG_SRC` | `$HOME/.kube/config` | pod spec — the user's real config, read-only |
 | `CIRRUS_NAMESPACE` | inferred, loudly | `submit.yml.erb`, as `ood-<%= user %>` |
 | `CIRRUS_CONTEXT` | `mlc1` | override only to test another cluster |
-| `CIRRUS_WORKDIR` | `$HOME/cirrus-workshop` | |
-| `JUPYTER_CONFIG_DIR` | `$CIRRUS_WORKDIR/.jupyter` | not `$HOME/.jupyter`; see below |
+| `CIRRUS_WORKDIR` | `$HOME/cirrus-intro` | the one workshop directory: material, and whatever the lessons have you write |
+| `CIRRUS_PERSIST_DIR` | `$HOME/.cirrus` | settings that outlive the session; deliberately not inside `CIRRUS_WORKDIR` |
+| `JUPYTER_CONFIG_DIR` | `$CIRRUS_PERSIST_DIR/jupyter` | not `$HOME/.jupyter`; see below |
 | `CIRRUS_STATE_DIR` | `/tmp/cirrus` | root of all per-session state |
 | `CIRRUS_JUPYTER_AUTH` | `none` | set to `token` to re-enable JupyterLab's own token |
 | `CIRRUS_KUBELOGIN_LOGIN` | `devicecode` | Azure kubelogin `--login` method |
@@ -99,10 +100,10 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_TOKEN_CACHE_DIR` | `$CIRRUS_STATE_DIR/kube/token-cache` | where the session's bearer token is cached |
 | `CIRRUS_KUBECTL_TIMEOUT` | `300s` | `cirrus-check`'s API timeout; long enough for a human to complete a device-code sign-in |
 | `CIRRUS_EXTENSIONS_DIR` | `$CIRRUS_STATE_DIR/code-server/extensions` | |
-| `CIRRUS_CONTENT_SRC` | `/opt/cirrus/content` | the image's copy of the introduction material |
-| `CIRRUS_CONTENT_DIR` | `$CIRRUS_WORKDIR/cirrus-intro` | where the topic pages are copied to at startup |
+| `CIRRUS_CONTENT_REPO` | unset | git repository the material is pulled from at startup; `submit.yml.erb` sets it |
+| `CIRRUS_CONTENT_BRANCH` | `main` | branch of it to pull |
 | `CIRRUS_START_PAGE` | `README.md` | the main page, relative to `CIRRUS_WORKDIR` |
-| `CIRRUS_SEED_CONTENT` | `1` | `0` leaves both copies completely alone |
+| `CIRRUS_PULL_CONTENT` | `1` | `0` skips the pull and leaves `CIRRUS_WORKDIR` alone |
 
 `CIRRUS_KUBECONFIG_SRC` has no `ENV` default in the Dockerfile because it
 depends on `$HOME`, which is only known at runtime; the scripts default it.
@@ -262,10 +263,15 @@ To try it:
 
 ## The introduction material
 
-`content/` in this directory is the workshop text: a main page (`README.md`) and
-`cirrus-intro/` with eleven pages plus troubleshooting. It is baked into the image at
-`/opt/cirrus/content`, so the pages and the tool versions they describe ship as
-one artifact.
+The material is **not in this image**. It lives in its own repository,
+<https://github.com/NicholasCote/cirrus-intro-content>, and `cirrus-content-pull`
+installs it into `CIRRUS_WORKDIR` at startup — a main page (`README.md`) and
+eleven notebooks. Correcting a lesson is a push to that repo, not a rebuild and
+re-tag of this one.
+
+The cost is that a session now depends on the cluster being able to reach GitHub.
+If it cannot, the pull fails loudly, the session still starts, and anything
+already pulled is untouched; `cirrus-content-pull` retries it from a terminal.
 
 The order is the delivery order, and it is deliberate — orientation before
 tooling, then the four things every deployment is built on, then the platform
@@ -376,56 +382,40 @@ and the way to answer it is to execute the notebook, not to read it:
 ```bash
 jupyter nbconvert --to notebook --execute --allow-errors \
   --ExecutePreprocessor.timeout=120 --output-dir /tmp --output done.ipynb \
-  /opt/cirrus/content/cirrus-intro/02-containers.ipynb
+  ~/cirrus-intro/02-containers.ipynb
 ```
 
-### Why it is copied into the working directory
+### Why it is pulled into the working directory
 
-JupyterLab serves nothing outside `ServerApp.root_dir`, which is
-`CIRRUS_WORKDIR`. So `/opt/cirrus/content` is unreachable from the file browser
-however it is configured, and the pages have to exist under the working
-directory. A symlink was the other option and was rejected: it reads as a broken
-link when the user looks at the same GLADE home from Casper.
+JupyterLab serves nothing outside `ServerApp.root_dir`, and code-server will only
+open a folder's `README.md` on launch. Both therefore need the material to be in
+the directory they open, which is `CIRRUS_WORKDIR` — so that is where the pull
+puts it, rather than a subdirectory of it.
 
-The start page is **replaced at every launch**, and so is any lesson the user has
-not run, which is how a correction to the material reaches attendees without
-anyone re-copying anything. Four things make that safe rather than destructive:
+That directory is also where the lessons have you write manifests, which is why
+the pull is `nbgitpuller` and not `git clone` or a copy. On the second launch it
+commits whatever you changed, merges the new material with `-Xours`, and so
+refreshes the pages nobody touched while keeping every edited notebook, every
+manifest and every scratch file. Verified: a notebook that has been run keeps the
+student's copy, an untouched one takes the correction, and `k8s/pod.yaml` is not
+noticed either way.
 
-* The start page is written mode `0444`. An editor refuses to save over it
-  instead of accepting an edit the next launch would silently discard.
-  Directories stay `0755`, because the next launch has to be able to remove them.
-* `content/cirrus-intro/.cirrus-content` ships *inside* the content, so a successful copy
-  always brings the stamp along. `seed_intro_pages()` refuses to touch a
-  `CIRRUS_CONTENT_DIR` that exists *without* that stamp — that is a directory the
-  user made, and removing it to install ours would be destroying their work.
-* The main page lands at the root of a directory the *user* chose on the form, so
-  it gets its own guard: `seed_start_page()` overwrites `README.md` only when the
-  file already there carries `cirrus-content:` on its first line. That is an HTML
-  comment — invisible rendered, and unmistakable in a file the user wrote.
-* **Notebooks are the exception, because running one modifies it.** Execution
-  counts and outputs are written back into the `.ipynb`, so replacing them every
-  launch would discard the work of anyone returning to finish a lesson. They ship
-  `0644` rather than `0444`, and `seed_intro_pages()` compares each existing
-  notebook against the pristine copy in the image: byte-identical means it was
-  never opened, so the new version wins; different means the user ran it, so
-  theirs is kept and the fact is logged. Corrections still reach anyone who has
-  not started, and nobody loses a lesson they have.
+Two consequences worth knowing:
 
-The directory is staged as `cirrus-intro.new` and moved into place rather than being
-overwritten, so a failure partway cannot leave it half-updated — and so the
-notebook carry-over above has somewhere to happen before the swap.
+* `CIRRUS_WORKDIR` must be empty or already a checkout. `GitPuller.pull()` is
+  `if not os.path.exists(repo_dir): initialize_repo() else: update()`, and
+  `update()` runs `git fetch`, which fails outside a checkout. The entrypoint has
+  already created the directory by then, so `cirrus-content-pull` removes it with
+  `rmdir` — which refuses anything non-empty — and refuses outright if there are
+  files in it that are not a checkout.
+* Nothing else may write into it before the pull. `JUPYTER_CONFIG_DIR` used to,
+  which is why `CIRRUS_PERSIST_DIR` is `$HOME/.cirrus` and not the working
+  directory: a `.jupyter` written before the first pull would have blocked every
+  pull after it, permanently.
 
-The directory was called `intro/` until September 2026, which was fine under
-`~/cirrus-workshop/` and useless to anyone who pointed the form at their GLADE
-home, where it sat unrecognisable among everything else. `seed_intro_pages()`
-moves a *stamped* `intro/` to `cirrus-intro/` on the next launch — moves, so the
-notebook carry-over above still sees it and a half-finished page survives — and
-leaves an unstamped one alone, since that one is the user's. The migration is
-skipped entirely when `CIRRUS_CONTENT_DIR` has been set by hand.
-
-Every failure here degrades: a read-only `$HOME`, a missing content directory, a
-`README.md` of the user's own, or `CIRRUS_SEED_CONTENT=0` costs the main page and
-nothing else. The session starts either way.
+If the pull fails, the directory is recreated empty regardless — `root_dir`
+pointing at a path that does not exist makes jupyter-server refuse to start, so
+losing it would turn "no material this time" into a session that never comes up.
 
 ### How the main page opens
 
@@ -476,8 +466,8 @@ cirrus-intro --main   # where the main page is
 
 ### Editing the material
 
-Edit `content/README.md` or `content/cirrus-intro/*.ipynb` and rebuild. Nothing
-generates and nothing has to be registered: `cirrus-intro` takes each page's
+Edit the notebooks in the content repository and push. Nothing is rebuilt and
+nothing has to be registered: `cirrus-intro` takes each page's
 title from its first heading and its selector from the numeric prefix on its
 filename, so adding a page is adding a file. The only name that is wired is
 `CIRRUS_START_PAGE`, and the `editorAssociations` glob derived from it and
@@ -525,12 +515,13 @@ or `$HOME/.config`.
 `/tmp`: it holds the user's Lab settings and workspace layout, which are worth
 keeping between sessions. Its default is `$HOME/.jupyter`, and `jupyter_core`
 writes a `migrated` marker into it on the very first command — so it is pointed
-at `$CIRRUS_WORKDIR/.jupyter` instead, which persists without putting anything
+at `$CIRRUS_PERSIST_DIR/jupyter` instead, which persists without putting anything
 new in the shared home's dotfiles.
 
-Only three things in `$HOME` are touched: `$HOME/cirrus-workshop` (the working
-directory, so the user's own files and Lab settings survive the session), the
-kubelogin token cache, and `$HOME/.kube/cache` — kubectl's discovery cache,
+Only four things in `$HOME` are touched: `$HOME/cirrus-intro` (the working
+directory, so the material and the user's own files survive the session),
+`$HOME/.cirrus` (Lab settings — outside the working directory, which has to stay
+a pure checkout), the kubelogin token cache, and `$HOME/.kube/cache` — kubectl's discovery cache,
 which it writes next to the kubeconfig no matter what and which their HPC
 sessions already share. Neither is a dotfile that can break a Casper or Derecho
 login.

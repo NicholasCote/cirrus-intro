@@ -14,6 +14,7 @@ ARG JUPYTERLAB_VERSION=4.6.3
 ARG NOTEBOOK_VERSION=7.6.2
 ARG JUPYTERLAB_GIT_VERSION=0.54.1
 ARG IPYKERNEL_VERSION=7.3.0
+ARG NBGITPULLER_VERSION=1.3.0
 ARG PYYAML_VERSION=6.0.3
 ARG KUBERNETES_PY_VERSION=36.0.3
 ARG REQUESTS_VERSION=2.34.2
@@ -100,6 +101,7 @@ ARG JUPYTERLAB_VERSION
 ARG NOTEBOOK_VERSION
 ARG JUPYTERLAB_GIT_VERSION
 ARG IPYKERNEL_VERSION
+ARG NBGITPULLER_VERSION
 ARG PYYAML_VERSION
 ARG KUBERNETES_PY_VERSION
 ARG REQUESTS_VERSION
@@ -164,6 +166,7 @@ RUN set -eu; \
         "notebook==${NOTEBOOK_VERSION}" \
         "jupyterlab-git==${JUPYTERLAB_GIT_VERSION}" \
         "ipykernel==${IPYKERNEL_VERSION}" \
+        "nbgitpuller==${NBGITPULLER_VERSION}" \
         "pyyaml==${PYYAML_VERSION}" \
         "kubernetes==${KUBERNETES_PY_VERSION}" \
         "requests==${REQUESTS_VERSION}"; \
@@ -194,6 +197,12 @@ RUN set -eu; \
 RUN set -eu; \
     /opt/venv/bin/python -m ipykernel install \
         --prefix=/usr/local --name python3 --display-name "Python 3 (CIRRUS)"; \
+    # The ipykernel wheel ships a "Python 3 (ipykernel)" kernelspec of its own
+    # into sys.prefix, and sys.prefix outranks /usr/local in jupyter_path -- so
+    # left in place it shadows the one just installed and JupyterLab offers the
+    # stock name. Installing with --prefix=/opt/venv used to overwrite it; now
+    # that the spec lives where VS Code can see it, the stock one has to go.
+    rm -rf /opt/venv/share/jupyter/kernels/python3; \
     chmod -R a+rX /usr/local/share/jupyter
 
 # --------------------------------------------------------------------------
@@ -313,30 +322,6 @@ COPY --chmod=0755 bin/ /usr/local/bin/
 COPY --chmod=0444 etc/cirrus/kubeconfig.yaml /opt/cirrus/kubeconfig.yaml
 
 # --------------------------------------------------------------------------
-# The introduction material. Shipped in the image, not fetched at runtime, so
-# the pages and the tool versions they describe are one artifact: a session that
-# worked at the last workshop shows the same material at the next one.
-#
-# The entrypoint copies this into the user's working directory at startup -- see
-# seed_intro_pages() there for how a notebook someone has run survives the
-# refresh. /opt/cirrus/content stays the authority; nothing writes here.
-#
-# --chmod is not used on the COPY: it applies to directories as well as files,
-# and a 0444 directory cannot be traversed.
-# --------------------------------------------------------------------------
-COPY content/ /opt/cirrus/content/
-
-# The lessons are notebooks and ship 0644, because a notebook you are meant to
-# execute has to be saveable -- running one writes execution counts and outputs
-# back into the file. That is not "replaced next launch": seed_intro_pages() in
-# the entrypoint compares each notebook against this pristine copy and keeps the
-# user's if it differs. The start page is prose, so it stays 0444.
-RUN set -eu; \
-    find /opt/cirrus/content -type d -exec chmod 0755 {} +; \
-    find /opt/cirrus/content -type f -exec chmod 0444 {} +; \
-    find /opt/cirrus/content -type f -name '*.ipynb' -exec chmod 0644 {} +
-
-# --------------------------------------------------------------------------
 # Resolved versions, recorded once at build time. cirrus-versions prints this
 # file; `cirrus-versions --check` re-runs each binary and diffs against it.
 # --------------------------------------------------------------------------
@@ -356,6 +341,7 @@ RUN set -eu; \
       printf 'notebook\t%s\n'     "${NOTEBOOK_VERSION}"; \
       printf 'jupyterlab-git\t%s\n' "${JUPYTERLAB_GIT_VERSION}"; \
       printf 'ipykernel\t%s\n'    "${IPYKERNEL_VERSION}"; \
+    printf 'nbgitpuller\t%s\n'  "${NBGITPULLER_VERSION}"; \
       printf 'pyyaml\t%s\n'       "${PYYAML_VERSION}"; \
       printf 'kubernetes\t%s\n'   "${KUBERNETES_PY_VERSION}"; \
       printf 'requests\t%s\n'     "${REQUESTS_VERSION}"; \
@@ -393,17 +379,19 @@ RUN set -eu; \
 # on its own, and an ENV value of "/" is indistinguishable from an operator saying
 # "serve at the root" -- which suppressed CIRRUS_BASE_URL_FILE entirely and left
 # Jupyter serving at / behind a /node/ proxy, i.e. a blank page.
-# CIRRUS_CONTENT_SRC is the image's own copy of the introduction material.
+# CIRRUS_CONTENT_REPO is the git repository the material is pulled from at
+# startup; it is not baked in here because it is a deployment choice, and
+# submit.yml.erb sets it. Empty means "nothing to pull", which
+# cirrus-content-pull reports rather than failing silently.
 # CIRRUS_START_PAGE is the main page, relative to CIRRUS_WORKDIR, and is README.md
 # because that is the only filename code-server can be made to open on launch --
-# see the code branch of the entrypoint. CIRRUS_CONTENT_DIR is deliberately not
-# set here: it defaults to $CIRRUS_WORKDIR/cirrus-intro, and CIRRUS_WORKDIR is
-# only known at runtime.
+# see the code branch of the entrypoint. CIRRUS_WORKDIR is deliberately not set
+# here: it defaults to $HOME/cirrus-intro, and $HOME is only known at runtime.
 ENV CIRRUS_PORT=8080 \
     CIRRUS_STATE_DIR=/tmp/cirrus \
     KUBECONFIG=/tmp/cirrus/kube/config \
     CIRRUS_JUPYTER_AUTH=none \
-    CIRRUS_CONTENT_SRC=/opt/cirrus/content \
+    CIRRUS_CONTENT_BRANCH=main \
     CIRRUS_START_PAGE=README.md
 
 EXPOSE 8080

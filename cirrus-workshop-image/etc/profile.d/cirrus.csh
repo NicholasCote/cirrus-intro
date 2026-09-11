@@ -37,14 +37,14 @@ if ( ! $?HELM_CONFIG_HOME )   setenv HELM_CONFIG_HOME  "${CIRRUS_STATE_DIR}/helm
 if ( ! $?HELM_DATA_HOME )     setenv HELM_DATA_HOME    "${CIRRUS_STATE_DIR}/helm/data"
 
 if ( ! $?KUBECONFIG )         setenv KUBECONFIG        "${CIRRUS_STATE_DIR}/kube/config"
-if ( ! $?CIRRUS_WORKDIR )     setenv CIRRUS_WORKDIR    "${HOME}/cirrus-workshop"
+if ( ! $?CIRRUS_WORKDIR )     setenv CIRRUS_WORKDIR    "${HOME}/cirrus-intro"
 
-# The introduction pages -- see cirrus.sh. cirrus-intro reads these.
-if ( ! $?CIRRUS_CONTENT_SRC ) setenv CIRRUS_CONTENT_SRC /opt/cirrus/content
-if ( ! $?CIRRUS_CONTENT_DIR ) setenv CIRRUS_CONTENT_DIR  "${CIRRUS_WORKDIR}/cirrus-intro"
+# The workshop material -- see cirrus.sh. It lives in CIRRUS_WORKDIR itself.
+if ( ! $?CIRRUS_CONTENT_REPO )   setenv CIRRUS_CONTENT_REPO   ""
+if ( ! $?CIRRUS_CONTENT_BRANCH ) setenv CIRRUS_CONTENT_BRANCH main
 if ( ! $?CIRRUS_START_PAGE )  setenv CIRRUS_START_PAGE   README.md
-if ( ! $?CIRRUS_PERSIST_DIR ) setenv CIRRUS_PERSIST_DIR "${HOME}/cirrus-workshop"
-if ( ! $?JUPYTER_CONFIG_DIR ) setenv JUPYTER_CONFIG_DIR "${CIRRUS_PERSIST_DIR}/.jupyter"
+if ( ! $?CIRRUS_PERSIST_DIR ) setenv CIRRUS_PERSIST_DIR "${HOME}/.cirrus"
+if ( ! $?JUPYTER_CONFIG_DIR ) setenv JUPYTER_CONFIG_DIR "${CIRRUS_PERSIST_DIR}/jupyter"
 if ( ! $?CIRRUS_KUBECONFIG_SRC ) setenv CIRRUS_KUBECONFIG_SRC `cirrus-kubeconfig-src`
 
 alias k kubectl

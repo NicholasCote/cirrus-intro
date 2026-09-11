@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+#
+# Install or refresh the workshop material in $CIRRUS_WORKDIR.
+#
+#   cirrus-content-pull          pull, or refresh what is already there
+#   cirrus-content-pull --check  report what would happen, change nothing
+#
+# The entrypoint runs this once at startup. It is a command of its own so that a
+# pull which failed -- the cluster could not reach GitHub, most likely -- can be
+# retried from a terminal without restarting the session.
+#
+# nbgitpuller does the work, not `git clone` or a copy, and the reason is the
+# second launch rather than the first. It commits whatever the user has changed,
+# merges the new material with -Xours, and so refreshes the pages nobody has
+# touched while leaving every edited notebook, every manifest written during a
+# lesson and every scratch file exactly where it was. It also supplies its own
+# git identity, which matters here: the pod's uid has no passwd entry of its own
+# and nobody has ever run `git config` in it.
+
+set -uo pipefail
+
+PROG="cirrus-content-pull"
+log()  { printf '%s: %s\n' "$PROG" "$*" >&2; }
+warn() { printf '%s: WARNING: %s\n' "$PROG" "$*" >&2; }
+
+REPO="${CIRRUS_CONTENT_REPO:-}"
+BRANCH="${CIRRUS_CONTENT_BRANCH:-main}"
+TARGET="${CIRRUS_WORKDIR:-${HOME}/cirrus-intro}"
+START="${CIRRUS_START_PAGE:-README.md}"
+
+CHECK=0
+case "${1:-}" in
+    --check) CHECK=1 ;;
+    -h|--help)
+        sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    "") ;;
+    *) printf '%s: unknown argument: %s\n' "$PROG" "$1" >&2; exit 2 ;;
+esac
+
+if [ -z "$REPO" ]; then
+    warn "CIRRUS_CONTENT_REPO is not set, so there is nothing to pull."
+    exit 1
+fi
+
+if [ "$CHECK" = "1" ]; then
+    printf 'repo:   %s\n' "$REPO"
+    printf 'branch: %s\n' "$BRANCH"
+    printf 'target: %s\n' "$TARGET"
+    if [ -d "${TARGET}/.git" ]; then
+        printf 'state:  already pulled; a run would refresh it\n'
+    elif [ -e "$TARGET" ] && [ -n "$(ls -A "$TARGET" 2>/dev/null)" ]; then
+        printf 'state:  exists with files but is not a git checkout; a run would refuse\n'
+    else
+        printf 'state:  absent or empty; a run would install the material\n'
+    fi
+    exit 0
+fi
+
+# The one case nbgitpuller cannot take over: a directory that already has files
+# in it and no .git. Its update path runs `git fetch` there and fails, which is
+# the safe outcome -- nothing is touched -- but the message is a traceback, so
+# say what it means instead. Never resolved by deleting their directory.
+if [ ! -d "${TARGET}/.git" ] && [ -e "$TARGET" ] && [ -n "$(ls -A "$TARGET" 2>/dev/null)" ]; then
+    warn "${TARGET} already has files in it and is not a git checkout, so the"
+    warn "material cannot be installed there without risking what is already"
+    warn "present. Move or rename it, then run '${PROG}' again."
+    exit 1
+fi
+
+# nbgitpuller clones only when the target does not exist: GitPuller.pull() is
+# `if not os.path.exists(repo_dir): initialize_repo() else: update()`, and update
+# runs `git fetch`, which fails outside a checkout. The entrypoint has already
+# created CIRRUS_WORKDIR by the time this runs, so an empty one has to go before
+# the first pull. rmdir rather than rm -rf: it refuses a directory with anything
+# in it, which is exactly the check wanted, and the guard above has already dealt
+# with the case where that matters.
+if [ -d "$TARGET" ] && [ ! -d "${TARGET}/.git" ]; then
+    rmdir -- "$TARGET" 2>/dev/null || true
+fi
+
+mkdir -p -- "$(dirname -- "$TARGET")" 2>/dev/null || true
+
+log "pulling ${REPO} (${BRANCH}) into ${TARGET}"
+if out="$(gitpuller "$REPO" "$BRANCH" "$TARGET" 2>&1)"; then
+    if [ -f "${TARGET}/${START}" ]; then
+        log "material ready in ${TARGET}"
+    else
+        warn "pulled ${REPO}, but it has no ${START} in it -- is the branch right?"
+    fi
+    exit 0
+fi
+
+# gitpuller reports failure as a Python traceback. Its last line names the git
+# command that failed and its exit status, which is the only part worth showing
+# someone who just wanted their workshop to open.
+warn "could not pull ${REPO} (${BRANCH})."
+printf '%s\n' "$out" | tail -1 | sed "s/^/${PROG}:   /" >&2
+
+# Put the directory back if the rmdir above took it. It is JupyterLab's root_dir,
+# and jupyter-server refuses to start at all against a root_dir that does not
+# exist -- so losing an empty directory here would turn "no material this time"
+# into a session that never comes up.
+mkdir -p -- "$TARGET" 2>/dev/null || true
+
+if [ -d "${TARGET}/.git" ]; then
+    warn "the material already in ${TARGET} is untouched and still usable."
+else
+    warn "there is no material in ${TARGET} yet."
+fi
+warn "if this cluster's pods have no route to GitHub, that is the likely cause."
+warn "retry with: ${PROG}"
+exit 1

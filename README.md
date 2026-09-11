@@ -17,7 +17,6 @@ info.md.erb             session card: which editor and shell were chosen
 template/               required by Batch Connect; empty, since submit.yml.erb
                         uses the built-in "basic" template
 cirrus-workshop-image/  the image this app launches -- own README, own Dockerfile
-  content/              the workshop text: README.md plus cirrus-intro/ per lesson
 .github/workflows/      builds and pushes that image to Harbor on a date tag
 ```
 
@@ -79,10 +78,13 @@ handles an unknown uid itself with `nss_wrapper`.
 
 ## What the session opens
 
-Not an empty file browser. The workshop material lives in the image at
-`/opt/cirrus/content`; the entrypoint installs it as `$CIRRUS_WORKDIR/README.md`
-plus `$CIRRUS_WORKDIR/cirrus-intro/`, and both editors open that `README.md` — which
-links to the eleven lessons and the troubleshooting page.
+Not an empty file browser. The workshop material lives in its own repository,
+<https://github.com/NicholasCote/cirrus-intro-content>, and `cirrus-content-pull`
+installs it into `$CIRRUS_WORKDIR` (`~/cirrus-intro` by default) at startup.
+Both editors open that directory and its `README.md` — which links to the eleven
+lessons and the troubleshooting page. One directory holds the material and
+whatever the lessons have you write; nbgitpuller is what refreshes the pages
+without touching either.
 
 The lessons are in delivery order: orientation (what CIRRUS is, the two sites,
 when to use it, how to get access), then containers, Kubernetes, Helm and Argo CD,

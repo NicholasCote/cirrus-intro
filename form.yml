@@ -40,9 +40,10 @@ attributes:
     value: ""
     required: false
     help: |
-      Absolute path the editor opens. Leave blank for `~/cirrus-workshop`, which
-      is created for you and is where the labs expect to put things. Only your
-      home directory is mounted, so this must be a path underneath it.
+      Absolute path the editor opens. Leave blank for `~/cirrus-intro`, which is
+      created for you and holds the workshop pages, the notebooks, and whatever
+      the lessons have you write. Only your home directory is mounted, so this
+      must be a path underneath it.
 
   cpu:
     widget: number_field
