@@ -317,27 +317,21 @@ COPY --chmod=0444 etc/cirrus/kubeconfig.yaml /opt/cirrus/kubeconfig.yaml
 # the pages and the tool versions they describe are one artifact: a session that
 # worked at the last workshop shows the same material at the next one.
 #
-# The entrypoint copies this into the user's working directory at startup,
-# read-only, and replaces it every launch -- see seed_intro_content() there for
-# why that is safe. /opt/cirrus/content stays the authority; nothing writes here.
+# The entrypoint copies this into the user's working directory at startup -- see
+# seed_intro_pages() there for how a notebook someone has run survives the
+# refresh. /opt/cirrus/content stays the authority; nothing writes here.
 #
 # --chmod is not used on the COPY: it applies to directories as well as files,
 # and a 0444 directory cannot be traversed.
 # --------------------------------------------------------------------------
 COPY content/ /opt/cirrus/content/
 
-# The notebook edition, generated from the Markdown rather than maintained
-# alongside it. Two hand-written copies of the same lesson drift within a week;
-# a build artifact cannot. See tools/md2ipynb.py for the conversion rules and
-# for the fence directives that let one source serve both editions.
-#
-# Notebooks are 0644 and Markdown is 0444 -- a notebook you are meant to execute
-# has to be saveable. The entrypoint is what keeps that from meaning "silently
-# replaced next launch"; see seed_intro_pages() there.
-COPY --chmod=0755 tools/md2ipynb.py /opt/cirrus/bin/md2ipynb.py
+# The lessons are notebooks and ship 0644, because a notebook you are meant to
+# execute has to be saveable -- running one writes execution counts and outputs
+# back into the file. That is not "replaced next launch": seed_intro_pages() in
+# the entrypoint compares each notebook against this pristine copy and keeps the
+# user's if it differs. The start page is prose, so it stays 0444.
 RUN set -eu; \
-    python3 /opt/cirrus/bin/md2ipynb.py \
-        /opt/cirrus/content/cirrus-intro /opt/cirrus/content/cirrus-intro; \
     find /opt/cirrus/content -type d -exec chmod 0755 {} +; \
     find /opt/cirrus/content -type f -exec chmod 0444 {} +; \
     find /opt/cirrus/content -type f -name '*.ipynb' -exec chmod 0644 {} +

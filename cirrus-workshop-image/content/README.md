@@ -43,7 +43,7 @@ which is why it hands you a code instead of opening one for you.
 
 The command then completes. The token is cached for about an hour, so the next
 `kubectl` will not ask again. When it expires you sign in once more — see
-[Troubleshooting](cirrus-intro/99-troubleshooting.md#i-am-asked-to-sign-in-again) for why
+[Troubleshooting](cirrus-intro/99-troubleshooting.ipynb#i-am-asked-to-sign-in-again) for why
 there is no silent refresh.
 
 ### 3. Check the session
@@ -56,26 +56,25 @@ Twenty checks: is there a session kubeconfig, is it pointed at the workshop
 cluster and *your* namespace, is your home directory being kept out of harm's
 way, can a token be obtained, does an authorized call come back. Every line
 should say `PASS`. If any say `FAIL`, the message names what to fix — and
-[Troubleshooting](cirrus-intro/99-troubleshooting.md) covers the ones that come up.
+[Troubleshooting](cirrus-intro/99-troubleshooting.ipynb) covers the ones that come up.
 
 ---
 
 ## The pages
 
-Eleven pages, in the order the work actually happens. Every lesson through page 5
-comes in two editions with the same content — **read** it as a page, or **run** it
-as a notebook. Pick whichever you prefer; they are generated from the same source,
-so neither is behind the other.
+Eleven notebooks, in the order the work actually happens. They are yours to run
+and scribble in: once you have run one it is kept across sessions rather than
+replaced from the image.
 
 ### Start here — the platform, and the four things it is built on
 
-| | lesson | read | run | what it covers |
-| --- | --- | --- | --- | --- |
-| 1 | Orientation | [md](cirrus-intro/01-orientation.md) | [ipynb](cirrus-intro/01-orientation.ipynb) | What CIRRUS is, the two sites, when to use it instead of Casper or Derecho, how to get access, and what comes with it |
-| 2 | Containers | [md](cirrus-intro/02-containers.md) | [ipynb](cirrus-intro/02-containers.ipynb) | What a container actually is, how to build one, and the registry that holds it — including CVE scans and SBOMs |
-| 3 | Kubernetes | [md](cirrus-intro/03-kubernetes.md) | [ipynb](cirrus-intro/03-kubernetes.ipynb) | `kubectl` and your namespace; Pods, Deployments, Services, Ingresses, ConfigMaps, PVCs — written and applied by hand |
-| 4 | Helm | [md](cirrus-intro/04-helm.md) | [ipynb](cirrus-intro/04-helm.ipynb) | Packaging those manifests into something installable, configurable and reviewable |
-| 5 | Argo CD | [md](cirrus-intro/05-argocd.md) | [ipynb](cirrus-intro/05-argocd.ipynb) | GitOps: the cluster pulling its own desired state from a repository, and how an application gets onboarded here |
+| | lesson | what it covers |
+| --- | --- | --- |
+| 1 | [Orientation](cirrus-intro/01-orientation.ipynb) | What CIRRUS is, the two sites, when to use it instead of Casper or Derecho, how to get access, and what comes with it |
+| 2 | [Containers](cirrus-intro/02-containers.ipynb) | What a container actually is, how to build one, and the registry that holds it — including CVE scans and SBOMs |
+| 3 | [Kubernetes](cirrus-intro/03-kubernetes.ipynb) | `kubectl` and your namespace; Pods, Deployments, Services, Ingresses, ConfigMaps, PVCs — written and applied by hand |
+| 4 | [Helm](cirrus-intro/04-helm.ipynb) | Packaging those manifests into something installable, configurable and reviewable |
+| 5 | [Argo CD](cirrus-intro/05-argocd.ipynb) | GitOps: the cluster pulling its own desired state from a repository, and how an application gets onboarded here |
 
 Pages 1 through 5 build on each other, and the application you deploy by hand in
 lesson 3 is the one you package in lesson 4 and hand to Argo CD in lesson 5. If
@@ -83,35 +82,35 @@ you read nothing else, read these.
 
 ### Then — the platform services every real application needs
 
-| | lesson | read | what it covers |
+| | lesson | what it covers |
 | --- | --- | --- | --- |
-| 6 | Secret Manager | [md](cirrus-intro/06-secrets.md) | OpenBao: where credentials live, and how they reach a pod without ever touching git |
-| 7 | Storage | [md](cirrus-intro/07-storage.md) | PVCs and storage classes, GLADE, and the on-site S3 |
-| 8 | GitHub Actions | [md](cirrus-intro/08-github-actions.md) | Runner scale sets on cluster hardware, building images without a Docker daemon, and CI security |
-| 9 | Observability | [md](cirrus-intro/09-observability.md) | Finding your logs and metrics in Grafana, and alerting on your own application |
-| 10 | Specialized workloads | [md](cirrus-intro/10-workloads.md) | Jupyter, functions as a service, MPI, and the LLM service |
-| — | Troubleshooting | [md](cirrus-intro/99-troubleshooting.md) | The failures people actually hit here |
+| 6 | [Secret Manager](cirrus-intro/06-secrets.ipynb) | OpenBao: where credentials live, and how they reach a pod without ever touching git |
+| 7 | [Storage](cirrus-intro/07-storage.ipynb) | PVCs and storage classes, GLADE, and the on-site S3 |
+| 8 | [GitHub Actions](cirrus-intro/08-github-actions.ipynb) | Runner scale sets on cluster hardware, building images without a Docker daemon, and CI security |
+| 9 | [Observability](cirrus-intro/09-observability.ipynb) | Finding your logs and metrics in Grafana, and alerting on your own application |
+| 10 | [Specialized workloads](cirrus-intro/10-workloads.ipynb) | Jupyter, functions as a service, MPI, and the LLM service |
+| — | [Troubleshooting](cirrus-intro/99-troubleshooting.ipynb) | The failures people actually hit here |
 
 Pages 6 to 10 are reference material rather than walkthroughs — a web UI, a
-ticket, or a manifest you commit rather than a command you type — so they ship as
-pages only. Read the one you need when you need it; each is self-contained.
-Troubleshooting is a lookup table, so it has no notebook either.
+ticket, or a manifest you commit rather than a command you type — so they are
+mostly prose, with few or no cells to run. Read the one you need when you need
+it; each is self-contained. Troubleshooting is a lookup table.
 
-### Which edition?
+### Running them
 
-**Notebooks** run the commands for you — click a cell, see the output, and it
-stays there as a record of what happened. Two things to know: sign in from a
-**terminal** first (`kubectl get pods`), because a credential prompt cannot be
-shown inside a kernel and will only time out; and a handful of steps are
+Sign in from a **terminal** first (`kubectl get pods`) and complete the
+device-code prompt. A credential prompt cannot be shown inside a kernel, so the
+first `kubectl` in a notebook will only time out. You will need to do it again
+roughly hourly, when the token expires.
+
+Then run the setup cell at the top, once — it sets the working directory and
+`$IMG` in the kernel, which every `%%bash` cell inherits. A handful of steps are
 terminal-only by nature — an interactive shell, watching two things at once —
-which appear as plain code blocks rather than runnable cells.
+and appear as plain code blocks rather than runnable cells.
 
-**Pages** are better if you would rather type the commands yourself, which is
-how you will actually work afterwards. Put the page and a terminal side by side:
-drag a tab to the right-hand edge in either editor and you get a split view.
-
-Notebooks are yours to scribble in — they persist between sessions once you have
-run them. The pages are read-only and refresh from the image every launch.
+If you would rather read a lesson than run it, `cirrus-intro 3` pages it in a
+terminal, and `jupyter nbconvert --to markdown 03-kubernetes.ipynb` writes it out
+as a Markdown file you can keep.
 
 ---
 
@@ -121,20 +120,19 @@ run them. The pages are read-only and refresh from the image every launch.
 | --- | --- | --- |
 | `~/cirrus-workshop/` | your working directory — the editor opens here | **yes**, it is on your GLADE home |
 | `~/cirrus-workshop/README.md` | this page | replaced from the image every launch |
-| `~/cirrus-workshop/cirrus-intro/` | the lessons, both editions | pages refresh every launch; notebooks you have run are kept |
+| `~/cirrus-workshop/cirrus-intro/` | the lessons | notebooks you have run are kept; untouched ones refresh every launch |
 | `/tmp/cirrus/` | caches, tokens, editor state | no, it is the pod's own disk |
 | `/opt/cirrus/` | the read-only bits the image ships | it is the image |
 
 Two consequences worth internalising:
 
-**Put your work in `~/cirrus-workshop/`, not below `cirrus-intro/`.** This page and the
-Markdown lessons are replaced from the image at every launch — that is how you
-get corrections without re-copying anything — so they are read-only, and your
-editor will refuse to save over one rather than let you lose an edit. Notebooks
-are the exception: once you have run one it is yours, and it is kept across
-launches instead of being replaced. Any *other* file you leave in `cirrus-intro/` is
-gone next session. Everything else in `~/cirrus-workshop/` is yours and
-persists.
+**Put your work in `~/cirrus-workshop/`, not below `cirrus-intro/`.** This page is
+replaced from the image at every launch — that is how you get corrections without
+re-copying anything — so it is read-only, and your editor will refuse to save
+over it rather than let you lose an edit. The lessons are the exception: once you
+have run a notebook it is yours, and it is kept across launches instead of being
+replaced. Any *other* file you leave in `cirrus-intro/` is gone next session.
+Everything else in `~/cirrus-workshop/` is yours and persists.
 
 **Your home directory is shared with Casper and Derecho.** This session
 deliberately writes almost nothing to it: caches, Python packages and editor
@@ -200,7 +198,7 @@ workshop on one of them, these are the CIRRUS ones, and they fit together:
 
 | workshop | what it adds |
 | --- | --- |
-| [nbviz-to-container](https://github.com/NicholasCote/nbviz-to-container) | takes a Jupyter notebook visualisation and turns it into a containerised web server — the natural sequel to [page 2](cirrus-intro/02-containers.md), and the one to do first if containers are the new part |
+| [nbviz-to-container](https://github.com/NicholasCote/nbviz-to-container) | takes a Jupyter notebook visualisation and turns it into a containerised web server — the natural sequel to [page 2](cirrus-intro/02-containers.ipynb), and the one to do first if containers are the new part |
 | [k8s-argo-codespace](https://github.com/NicholasCote/k8s-argo-codespace) | Argo CD end to end against a real Flask application and Helm chart: install it, deploy through it, change a value in git and watch it sync, then break the image tag and watch it hold |
 | [gitops-harbor-workshop](https://github.com/NicholasCote/gitops-harbor-workshop) | the CI half — GitHub Actions building an image, a Harbor robot account, pushing to `hub.k8s.ucar.edu`, and Argo CD picking it up |
 
@@ -219,7 +217,7 @@ volumes, PostgreSQL, Dask, OpenBao secrets and Prometheus alerts. Every page fro
 
 * `cirrus-check` first, always. It turns "Kubernetes is broken" into a line
   naming what is wrong.
-* [Troubleshooting](cirrus-intro/99-troubleshooting.md) for the specific failures this
+* [Troubleshooting](cirrus-intro/99-troubleshooting.ipynb) for the specific failures this
   environment produces.
 * NCAR HPC documentation:
   <https://ncar-hpc-docs.readthedocs.io/en/latest/compute-systems/cirrus/>
@@ -229,4 +227,4 @@ volumes, PostgreSQL, Dask, OpenBao secrets and Prometheus alerts. Every page fro
   *Report Issue* forms linked from that site, or <cirrus-admin@ucar.edu>.
 * At a live workshop: ask. That is what the room is for.
 
-Ready — [1. Orientation: what CIRRUS is](cirrus-intro/01-orientation.md).
+Ready — [1. Orientation: what CIRRUS is](cirrus-intro/01-orientation.ipynb).

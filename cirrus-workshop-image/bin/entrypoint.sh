@@ -377,11 +377,12 @@ seed_intro_pages() {
         return 1
     fi
 
-    # Markdown read-only, notebooks not. A read-only page means an editor
-    # refuses to save over it rather than accepting an edit the next launch
-    # would discard; a notebook has to be saveable to be runnable at all, and
-    # the comparison above is what protects it instead. Directories stay
-    # writable either way, since the next launch has to be able to replace them.
+    # Notebooks are 0644, because a notebook has to be saveable to be runnable
+    # at all -- the comparison above is what protects it from the next launch
+    # instead. Anything else that ships here is read-only, so an editor refuses
+    # to save over it rather than accepting an edit the next launch would
+    # discard. Directories stay writable either way, since the next launch has
+    # to be able to replace them.
     find "$CIRRUS_CONTENT_DIR" -type d -exec chmod 0755 {} + 2>/dev/null || true
     find "$CIRRUS_CONTENT_DIR" -type f -exec chmod 0444 {} + 2>/dev/null || true
     find "$CIRRUS_CONTENT_DIR" -type f -name '*.ipynb' -exec chmod 0644 {} + 2>/dev/null || true
@@ -733,7 +734,6 @@ code)
 {
   "workbench.startupEditor": "STARTUP_EDITOR",
   "workbench.editorAssociations": {
-    "INTRO_GLOB": "vscode.markdown.preview.editor",
     "START_PAGE_GLOB": "vscode.markdown.preview.editor"
   },
   "files.exclude": {
@@ -768,10 +768,12 @@ SETTINGS
         # Substituted rather than written into the heredoc, which stays quoted so
         # that nothing else in the JSON is expanded.
         #
-        # The two globs make the material open in the Markdown preview -- the
-        # equivalent of JupyterLab's defaultViewers override -- and are scoped by
+        # The glob makes the start page open in the Markdown preview -- the
+        # equivalent of JupyterLab's defaultViewers override -- and is scoped by
         # path so that Markdown the user writes still opens as text. VS Code
-        # matches a pattern containing a slash against the whole path.
+        # matches a pattern containing a slash against the whole path. The
+        # lessons need no association: they are notebooks, and both editors open
+        # a notebook in a notebook editor already.
         #
         # "readme" is what opens the main page on launch. It is not a nicety: a
         # file passed to code-server positionally is *discarded*, and takes the
@@ -781,7 +783,6 @@ SETTINGS
         # that works. It falls back to the welcome page if there is no readme, so
         # it is only set when one was actually installed.
         sed -i \
-            -e "s|INTRO_GLOB|**/$(basename -- "$CIRRUS_CONTENT_DIR")/*.md|" \
             -e "s|START_PAGE_GLOB|**/$(basename -- "$CIRRUS_WORKDIR")/${CIRRUS_START_PAGE}|" \
             -e "s|STARTUP_EDITOR|$([ -n "$START_PAGE_PATH" ] && echo readme || echo none)|" \
             "$USER_SETTINGS"

@@ -18,7 +18,6 @@ template/               required by Batch Connect; empty, since submit.yml.erb
                         uses the built-in "basic" template
 cirrus-workshop-image/  the image this app launches -- own README, own Dockerfile
   content/              the workshop text: README.md plus cirrus-intro/ per lesson
-  tools/                md2ipynb.py -- generates the notebook edition at build
 .github/workflows/      builds and pushes that image to Harbor on a date tag
 ```
 
@@ -90,12 +89,15 @@ when to use it, how to get access), then containers, Kubernetes, Helm and Argo C
 then the platform services — secrets, storage, GitHub Actions, observability, and
 the specialized workloads (Jupyter, FaaS, MPI, LLM).
 
-The first five ship in **two editions**: `.md` to read and `.ipynb` to run. The
-Markdown is the source and the notebooks are generated from it at build time, so
-they cannot drift. Notebooks are runnable in both editors — that needed
-`ms-toolsai.jupyter` and `ms-python.python` added to code-server, since its
-built-in notebook support renders but cannot execute. The later pages are
-reference material and ship as pages only.
+Every lesson is a **notebook**, committed as `.ipynb` and edited as one — there
+is no Markdown edition and nothing generates one. That is what makes a lesson
+editable in place: run it or annotate it and your copy is kept across sessions,
+where the old read-only `.md` was replaced every launch. They are runnable in
+both editors, which needed `ms-toolsai.jupyter` and `ms-python.python` added to
+code-server, since its built-in notebook support renders but cannot execute.
+Pages 6 to 10 and troubleshooting are reference material, so they are mostly
+prose with few or no cells to run. `jupyter nbconvert --to markdown` is there for
+anyone who wants a page as text.
 
 Nothing about that is in this app's files: the material, the copies, and the two
 editors' "open this file, rendered" settings are all the image's business, and are

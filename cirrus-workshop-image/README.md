@@ -271,41 +271,50 @@ The order is the delivery order, and it is deliberate — orientation before
 tooling, then the four things every deployment is built on, then the platform
 services:
 
-| | page | notebook? |
+| | page | runnable cells? |
 | --- | --- | --- |
-| 1 | `01-orientation.md` — what CIRRUS is, the two sites, CIRRUS vs Casper/Derecho, access, namespaces, the services included | yes |
-| 2 | `02-containers.md` — containers, and Harbor including scans and SBOMs | yes |
-| 3 | `03-kubernetes.md` — kubectl, namespaces, Pod/Deployment/Service/Ingress/ConfigMap/Secret/PVC | yes |
-| 4 | `04-helm.md` — charts, `template`, testing locally, and handing over to Argo CD | yes |
-| 5 | `05-argocd.md` — GitOps, onboarding on CIRRUS, ownership, notifications | yes |
-| 6 | `06-secrets.md` — OpenBao, SecretStore, ExternalSecret | no |
-| 7 | `07-storage.md` — PVCs and storage classes, GLADE, S3 | no |
-| 8 | `08-github-actions.md` — scale sets, BuildKit, CI best practice | no |
-| 9 | `09-observability.md` — Grafana, Loki, Prometheus, alerting | no |
-| 10 | `10-workloads.md` — Jupyter, Fission, MPI operator, LLM services | no |
-| — | `99-troubleshooting.md` | no |
+| 1 | `01-orientation.ipynb` — what CIRRUS is, the two sites, CIRRUS vs Casper/Derecho, access, namespaces, the services included | 3 |
+| 2 | `02-containers.ipynb` — containers, and Harbor including scans and SBOMs | 11 |
+| 3 | `03-kubernetes.ipynb` — kubectl, namespaces, Pod/Deployment/Service/Ingress/ConfigMap/Secret/PVC | 33 |
+| 4 | `04-helm.ipynb` — charts, `template`, testing locally, and handing over to Argo CD | 22 |
+| 5 | `05-argocd.ipynb` — GitOps, onboarding on CIRRUS, ownership, notifications | 5 |
+| 6 | `06-secrets.ipynb` — OpenBao, SecretStore, ExternalSecret | 1 |
+| 7 | `07-storage.ipynb` — PVCs and storage classes, GLADE, S3 | 3 |
+| 8 | `08-github-actions.ipynb` — scale sets, BuildKit, CI best practice | none |
+| 9 | `09-observability.ipynb` — Grafana, Loki, Prometheus, alerting | 1 |
+| 10 | `10-workloads.ipynb` — Jupyter, Fission, MPI operator, LLM services | none |
+| — | `99-troubleshooting.ipynb` | 20 |
 
-### Two editions, one source
+### Notebooks are the source
 
-Every lesson ships twice: `NN-name.md` to read and `NN-name.ipynb` to run. The
-Markdown is the source of truth and the notebooks are **generated from it at
-image build time** by `tools/md2ipynb.py`. That is the whole point of the
-arrangement — two hand-maintained copies of the same lesson drift within a week,
-and a build artifact cannot. It also makes settling on one edition cheap: stop
-generating, or stop shipping the `.md`, and nothing has to be reconciled.
+Every lesson is a committed `.ipynb`. There is no second edition and no
+generator: you edit the notebook, and that is the file that ships.
 
-Only pages 1 to 5 get a notebook edition — those are the walkthroughs, and
-`PAGES` in `md2ipynb.py` is the list. Pages 6 to 10 and `99-troubleshooting.md`
-are reference material: a web UI, a ticket, or a manifest you commit rather than
-a command you run, so a notebook of one would only be a worse way to read it.
-Adding a page to `PAGES` is how that changes.
+It used to be the other way round — Markdown was the source and
+`tools/md2ipynb.py` generated a notebook edition of pages 1 to 5 at build time —
+so each lesson existed twice in the working directory and only one of the two was
+saveable. Editing the one in front of you usually meant editing the copy that
+gets replaced next launch. Now there is one file per lesson, and the file you
+edit is the file that persists.
 
-Markdown is the right source because it renders in **both** editors with no
-extension at all. Notebooks needed something added: code-server's built-in
-`ipynb` extension only *renders* a notebook, so `ms-toolsai.jupyter` (the kernel
-provider) and `ms-python.python` (the interpreter provider) are installed from
-Open VSX alongside the YAML and Kubernetes ones. They are pinned like everything
-else and recorded in `versions.txt`.
+Pages 6 to 10 and troubleshooting are still reference material rather than
+walkthroughs — a web UI, a ticket, or a manifest you commit rather than a command
+you run — so they are mostly prose, with few or no runnable cells. They are
+notebooks because everything is, not because there is much to execute.
+
+Anyone who would rather read Markdown can produce it, which is the other half of
+why nothing generates it here:
+
+```bash
+jupyter nbconvert --to markdown 03-kubernetes.ipynb
+```
+
+Notebooks need something added to code-server: its built-in `ipynb` extension
+only *renders* a notebook, so `ms-toolsai.jupyter` (the kernel provider) and
+`ms-python.python` (the interpreter provider) are installed from Open VSX
+alongside the YAML and Kubernetes ones. They are pinned like everything else and
+recorded in `versions.txt`. Since the lessons are now notebooks and nothing
+else, these two are load-bearing rather than optional.
 
 The kernelspec is installed to `/usr/local/share/jupyter`, not into the venv,
 and that is not a detail. JupyterLab searches `sys.prefix` and would find it
@@ -321,29 +330,26 @@ hides the system interpreters from the kernel picker.
 Those two pull in six more as dependencies (`debugpy`, `vscode-python-envs`,
 `jupyter-renderers`, `jupyter-keymap`, `cell-tags`, `slideshow`) and cost about
 **112 MB** of the 124 MB extension directory — against 224 KB for the material
-itself. **If the workshop settles on the Markdown edition, those two `ARG`s and
-their `--install-extension` lines are the first thing to drop.** Worth watching
+itself — and with the Markdown edition gone they can no longer be dropped. Worth watching
 on the next CI run: the Trivy gate is CRITICAL-only, and this much new
 `node_modules` is the most likely thing to trip it.
 
-Neither editor renders Markdown by default, so both still need a nudge; see
-*How the main page opens*.
+The start page is still Markdown and neither editor renders it by default, so it
+needs a nudge; see *How the main page opens*.
 
-### How the notebooks are generated
+### How the notebooks are shaped
 
-`tools/md2ipynb.py`, run from the Dockerfile. Prose becomes Markdown cells split
-at headings; ` ```bash ` fences become code cells; every other fence stays inside
-the prose, because a manifest or a Dockerfile is an illustration rather than
-something to run.
-
-Three decisions in there are worth knowing about, because each one is a bug that
-was found by running the output rather than reading it:
+They were converted from the Markdown once, in September 2026, and hand-edited
+since. Three things the conversion settled are worth preserving when you write a
+new page, because each one was a bug found by running a notebook rather than
+reading it:
 
 **Shell cells use `%%bash`, not `!command` per line.** The pages are full of
 heredocs (`cat > pod.yaml <<'EOF' … EOF`), and a heredoc cannot survive being
-split into `!` lines.
+split into `!` lines. The cost is that each cell is its own subshell, which is
+what the setup cell exists to fix.
 
-**A generated setup cell carries the state that `%%bash` cannot.** Each `%%bash`
+**The setup cell carries the state that `%%bash` cannot.** Each `%%bash`
 cell is its own subshell, so `IMG=…` in one cell is gone in the next and `cd`
 never persists. The setup cell sets the working directory and `$IMG` in the
 *kernel* instead — via `os.chdir()` and `os.environ` — and every `%%bash`
@@ -358,23 +364,19 @@ a terminal and re-run. This is the same constraint that makes the notebooks a
 terminal-first experience no matter what, and it is called out in each notebook's
 preamble.
 
-**Fence directives** let one source serve both editions. They are extra words in
-the info string, which Markdown renderers ignore, so they are invisible in the
-`.md`:
+**Some steps cannot be cells at all**, and are Markdown fenced blocks on purpose:
+an interactive shell, an endless reconcile loop, a `watch` with no bound, a
+reference list full of `<placeholders>`. A `-w` watch that *is* worth running is
+wrapped in `timeout N` so it shows what it is meant to show and then ends instead
+of hanging the kernel.
 
-| directive | effect on the notebook |
-| --- | --- |
-| ` ```bash notebook-skip ` | stays a fenced block instead of a runnable cell — an interactive shell, an endless reconcile loop, a reference list full of `<placeholders>` |
-| ` ```bash notebook-timeout=N ` | wrapped in `timeout N`, so a `-w` watch shows what it is meant to show and then ends instead of hanging the kernel |
-
-Six blocks across the five lessons carry one of these. If you add a page, the
-check to run is "would every cell terminate on its own" — and the way to answer
-it is to execute the notebook, not to read it:
+If you add a page, the check to run is "would every cell terminate on its own" —
+and the way to answer it is to execute the notebook, not to read it:
 
 ```bash
 jupyter nbconvert --to notebook --execute --allow-errors \
   --ExecutePreprocessor.timeout=120 --output-dir /tmp --output done.ipynb \
-  /opt/cirrus/content/cirrus-intro/01-containers.ipynb
+  /opt/cirrus/content/cirrus-intro/02-containers.ipynb
 ```
 
 ### Why it is copied into the working directory
@@ -385,11 +387,11 @@ however it is configured, and the pages have to exist under the working
 directory. A symlink was the other option and was rejected: it reads as a broken
 link when the user looks at the same GLADE home from Casper.
 
-Both copies are **replaced at every launch**, which is how a correction to the
-material reaches attendees without anyone re-copying anything. Four things make
-that safe rather than destructive:
+The start page is **replaced at every launch**, and so is any lesson the user has
+not run, which is how a correction to the material reaches attendees without
+anyone re-copying anything. Four things make that safe rather than destructive:
 
-* The files are written mode `0444`. An editor refuses to save over a page
+* The start page is written mode `0444`. An editor refuses to save over it
   instead of accepting an edit the next launch would silently discard.
   Directories stay `0755`, because the next launch has to be able to remove them.
 * `content/cirrus-intro/.cirrus-content` ships *inside* the content, so a successful copy
@@ -427,13 +429,14 @@ nothing else. The session starts either way.
 
 ### How the main page opens
 
-Both editors need two things: a default *viewer* for Markdown, and the file to
-open on launch.
+The main page is the one piece of Markdown left, and both editors need two
+things for it: a default *viewer* for Markdown, and the file to open on launch.
+The lessons need neither — a notebook opens in a notebook editor by itself.
 
 | | rendered by default | opened on launch |
 | --- | --- | --- |
 | JupyterLab | `overrides.json` under `/opt/venv/share/jupyter/lab/settings` points `defaultViewers` for `markdown` at `Markdown Preview` | `--LabApp.default_url=/lab/tree/<path>`, the path relative to `root_dir` |
-| code-server | `workbench.editorAssociations` maps the material's paths to `vscode.markdown.preview.editor`, in the settings the entrypoint seeds | `workbench.startupEditor: readme` |
+| code-server | `workbench.editorAssociations` maps the start page's path to `vscode.markdown.preview.editor`, in the settings the entrypoint seeds | `workbench.startupEditor: readme` |
 
 ### Why the main page is called README.md
 
@@ -473,12 +476,18 @@ cirrus-intro --main   # where the main page is
 
 ### Editing the material
 
-Edit `content/README.md` or `content/cirrus-intro/*.md` and rebuild. There is nothing to
-register: `cirrus-intro` takes each page's title from its first heading and its
-selector from the numeric prefix on its filename, so adding a page is adding a
-file. The only names that are wired are `CIRRUS_START_PAGE` and the two
-`editorAssociations` globs, which are derived from `CIRRUS_CONTENT_DIR` and
+Edit `content/README.md` or `content/cirrus-intro/*.ipynb` and rebuild. Nothing
+generates and nothing has to be registered: `cirrus-intro` takes each page's
+title from its first heading and its selector from the numeric prefix on its
+filename, so adding a page is adding a file. The only name that is wired is
+`CIRRUS_START_PAGE`, and the `editorAssociations` glob derived from it and
 `CIRRUS_WORKDIR` at runtime.
+
+Editing a notebook means committing JSON, so keep the diffs readable: clear the
+outputs before you commit (**Kernel → Restart Kernel and Clear Outputs**, or
+`jupyter nbconvert --clear-output --inplace <page>.ipynb`). The committed pages
+have no outputs and no execution counts, which is also what makes the
+"has the user run this?" comparison in `seed_intro_pages()` work.
 
 The pages assume as little about the cluster as they can. Demo workloads use the
 image the session is already running —

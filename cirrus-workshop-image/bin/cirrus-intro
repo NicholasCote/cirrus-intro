@@ -9,11 +9,11 @@
 #   cirrus-intro helm    read the page whose name matches "helm"
 #   cirrus-intro --path  print the directory the pages are in
 #
-# The editors open these rendered -- JupyterLab via default_url and a Markdown
-# Preview default viewer, code-server via a positional argument and an editor
-# association. This exists for the cases where that does not apply: a tcsh
-# terminal, someone who closed the tab, or the BYO-image OOD app, which supplies
-# its own Jupyter config and so never sees our default_url.
+# The lessons are notebooks; both editors open them properly and this does not
+# try to. It renders one to Markdown with nbconvert and pages it, for the cases
+# where an editor is not the thing in front of you: a tcsh terminal, someone who
+# closed the tab, or the BYO-image OOD app, which supplies its own Jupyter config
+# and so never sees our default_url.
 
 set -uo pipefail
 
@@ -43,14 +43,40 @@ if [ ! -d "$DIR" ] && [ -z "$MAIN" ]; then
 fi
 
 # Title = the first ATX heading, so the listing stays correct if a page is
-# retitled and nothing has to be kept in step by hand.
-title_of() {
-    sed -n 's/^#[[:space:]]\{1,\}//p' -- "$1" 2>/dev/null | head -1
+# retitled and nothing has to be kept in step by hand. Every page in one python
+# pass rather than one process per page: a notebook title means parsing JSON,
+# and eleven interpreter starts to print a menu is a menu nobody runs twice.
+titles_of() {
+    python3 - "$@" <<'TITLES'
+import json, re, sys
+
+for path in sys.argv[1:]:
+    title = ""
+    try:
+        if path.endswith(".ipynb"):
+            for cell in json.load(open(path, encoding="utf-8")).get("cells", []):
+                if cell.get("cell_type") != "markdown":
+                    continue
+                m = re.search(r"^#\s+(.*)$", "".join(cell.get("source", [])), re.M)
+                if m:
+                    title = m.group(1).strip()
+                    break
+        else:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    m = re.match(r"^#\s+(.*)$", line)
+                    if m:
+                        title = m.group(1).strip()
+                        break
+    except (OSError, ValueError, KeyError):
+        pass
+    print(f"{path}\t{title}")
+TITLES
 }
 
 pages() {
     [ -n "$MAIN" ] && printf '%s\n' "$MAIN"
-    find "$DIR" -maxdepth 1 -name '*.md' -type f 2>/dev/null | LC_ALL=C sort
+    find "$DIR" -maxdepth 1 -name '*.ipynb' -type f 2>/dev/null | LC_ALL=C sort
 }
 
 usage() {
@@ -73,11 +99,16 @@ esac
 
 mapfile -t FILES < <(pages)
 if [ "${#FILES[@]}" -eq 0 ]; then
-    printf '%s: no .md pages in %s\n' "$PROG" "$DIR" >&2
+    printf '%s: no pages in %s\n' "$PROG" "$DIR" >&2
     exit 1
 fi
 
 if [ "$#" -eq 0 ] || [ "${1:-}" = "--list" ]; then
+    declare -A TITLES=()
+    while IFS="$(printf '\t')" read -r _path _title; do
+        TITLES["$_path"]="$_title"
+    done < <(titles_of "${FILES[@]}" 2>/dev/null)
+
     printf 'CIRRUS workshop introduction\n\n'
     for f in "${FILES[@]}"; do
         base="$(basename -- "$f")"
@@ -88,7 +119,7 @@ if [ "$#" -eq 0 ] || [ "${1:-}" = "--list" ]; then
             *[!0-9]*|'') n="0" ;;      # the main page: no prefix, selector 0
             *) n="$((10#$n))" ;;
         esac
-        printf '  %3s  %-24s %s\n' "$n" "$base" "$(title_of "$f")"
+        printf '  %3s  %-28s %s\n' "$n" "$base" "${TITLES[$f]:-}"
     done
     printf '\nRead one with: %s <number>\n' "$PROG"
     printf 'Main page: %s\n' "${MAIN:-<none>}"
@@ -124,14 +155,32 @@ if [ -z "$target" ]; then
     exit 1
 fi
 
-# less -R so the pages keep their formatting; not a Markdown renderer, because
-# adding one would be a Python dependency for something the editors already do
-# better. The ownership marker on the main page's first line is stripped: it is
-# an HTML comment, invisible in a rendered view, and noise in a pager.
-strip_marker() { sed '/^<!-- cirrus-content:/d' -- "$1"; }
+# A notebook is JSON, so it goes through nbconvert -- the one Jupyter already
+# ships, rather than a second renderer here to keep in step with it. Output is
+# Markdown, not rendered Markdown: less -R keeps the formatting readable and
+# adding a real renderer would be a dependency for something both editors
+# already do better. The main page is prose already; the only thing it needs is
+# its ownership marker stripped, an HTML comment that is invisible in a rendered
+# view and noise in a pager.
+render() {
+    case "$1" in
+        *.ipynb)
+            if ! command -v jupyter >/dev/null 2>&1; then
+                printf '%s: jupyter is not on PATH, so %s cannot be rendered here.\n' \
+                    "$PROG" "$(basename -- "$1")" >&2
+                printf 'Open it in the editor instead.\n' >&2
+                return 1
+            fi
+            jupyter nbconvert --to markdown --stdout --log-level=ERROR "$1" 2>/dev/null
+            ;;
+        *)
+            sed '/^<!-- cirrus-content:/d' -- "$1"
+            ;;
+    esac
+}
 
 if [ -t 1 ] && command -v less >/dev/null 2>&1; then
-    strip_marker "$target" | less -R
+    render "$target" | less -R
     exit $?
 fi
-strip_marker "$target"
+render "$target"
