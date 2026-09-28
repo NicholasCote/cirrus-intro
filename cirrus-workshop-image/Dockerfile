@@ -205,6 +205,10 @@ RUN set -eu; \
     rm -rf /opt/venv/share/jupyter/kernels/python3; \
     chmod -R a+rX /usr/local/share/jupyter
 
+# Holds every kernel to the session kubeconfig, as the prompt hook does for
+# terminals. See the file.
+COPY --chmod=0644 etc/ipython/ipython_kernel_config.py /opt/venv/etc/ipython/ipython_kernel_config.py
+
 # --------------------------------------------------------------------------
 # code-server extensions, pre-installed into a system directory so nobody is
 # prompted on first launch. The entrypoint seeds a writable per-session copy

@@ -218,6 +218,14 @@ turns it off for that shell. `cirrus-check` fails first on a `KUBECONFIG` that
 is not the session copy, and `cirrus-kubeconfig-init` refuses to write its
 output anywhere under `~/.kube`.
 
+**So do notebook kernels.** A kernel has no prompt for the hook to run before,
+and VS Code does not necessarily launch it with the server's environment, so a
+`%%bash kubectl` cell could miss the session copy and ask for a new sign-in
+after the terminal had already signed in.
+`/opt/venv/etc/ipython/ipython_kernel_config.py` sets `KUBECONFIG` to the
+session copy when each kernel starts, in both editors, and honours
+`CIRRUS_KUBECONFIG_OVERRIDE` the same way.
+
 > **First call authenticates.** With a cold token cache, the first `kubectl` in a
 > terminal prints a device-code URL. Run one there before using the `kubernetes`
 > Python client from a notebook — the exec plugin's prompt has nowhere to go
