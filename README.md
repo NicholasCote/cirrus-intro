@@ -67,11 +67,12 @@ Set, because OOD knows them for certain and the container does not:
 * `CIRRUS_SHELL` — from the form; the image falls back to bash if it is not
   installed rather than handing out a session with no usable terminal.
 
-**Not** set: `CIRRUS_KUBECONFIG_SRC`. Left alone, the image searches
-`~/.kube/cirrus-config`, then `~/.kube/config`, then the kubeconfig baked into the
-image, and takes the first that can actually work in a container. Pinning it here
-would turn the common case — an attendee with no kubeconfig of their own — from a
-working session into a hard failure.
+**Not** set: `CIRRUS_KUBECONFIG_SRC`. Left alone, the image first fetches the
+current CIRRUS kubeconfig from `https://s3.k8s.ucar.edu:5443/cirrus-config/kubeconfig`
+into `~/.kube/cirrus-config`, then searches `~/.kube/cirrus-config`, then
+`~/.kube/config`, and takes the first that can actually work in a container.
+Setting it here would skip that fetch, so a CA rotation would leave sessions with
+whatever stale file the setting names.
 
 No `/etc/passwd` configmap either, unlike the other CIRRUS OOD apps: the image
 handles an unknown uid itself with `nss_wrapper`.

@@ -317,10 +317,6 @@ RUN printf '\n# CIRRUS workshop environment (interactive non-login shells)\nif [
 
 COPY --chmod=0755 bin/ /usr/local/bin/
 
-# The fallback kubeconfig, so a session works with an empty GLADE home. Contains
-# no per-user material -- see the header in the file itself.
-COPY --chmod=0444 etc/cirrus/kubeconfig.yaml /opt/cirrus/kubeconfig.yaml
-
 # --------------------------------------------------------------------------
 # Resolved versions, recorded once at build time. cirrus-versions prints this
 # file; `cirrus-versions --check` re-runs each binary and diffs against it.
@@ -373,8 +369,11 @@ RUN set -eu; \
 #                 and passes it in here.
 # KUBECONFIG      the session's working copy, mutated freely. Never the user's.
 #
-# CIRRUS_KUBECONFIG_SRC is deliberately not set: it defaults to
-# $HOME/.kube/config, and $HOME is only known at runtime.
+# CIRRUS_KUBECONFIG_SRC is deliberately not set: cirrus-kubeconfig-src searches
+# $HOME, which is only known at runtime. There is no kubeconfig in the image at
+# all: cirrus-kubeconfig-init fetches the current one at launch (default
+# https://s3.k8s.ucar.edu:5443/cirrus-config/kubeconfig, CIRRUS_KUBECONFIG_URL
+# overrides), because that endpoint is on the UCAR network and a builder is not.
 # CIRRUS_BASE_URL is deliberately NOT set here. The entrypoint defaults it to "/"
 # on its own, and an ENV value of "/" is indistinguishable from an operator saying
 # "serve at the root" -- which suppressed CIRRUS_BASE_URL_FILE entirely and left

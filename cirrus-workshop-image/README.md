@@ -9,7 +9,7 @@ One container image behind two Open OnDemand apps:
 
 It carries the Kubernetes tooling for the workshop labs, pre-pointed at the
 `mlc1` cluster and the user's own `ood-<user>` namespace, using the Capsule OIDC
-kubeconfig they already have.
+kubeconfig CIRRUS publishes, fetched fresh at every launch.
 
 Published to `hub.k8s.ucar.edu/ncote/cirrus-workshop`.
 
@@ -86,7 +86,9 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_PORT` | `8080` | pod spec (matches the existing CIRRUS OOD apps' fixed containerPort) |
 | `CIRRUS_BASE_URL` | `/` | pod spec / init container, for Jupyter |
 | `KUBECONFIG` | `/tmp/cirrus/kube/config` | pod spec — the session's **working copy** |
-| `CIRRUS_KUBECONFIG_SRC` | `$HOME/.kube/config` | pod spec — the user's real config, read-only |
+| `CIRRUS_KUBECONFIG_SRC` | searched: `~/.kube/cirrus-config`, `~/.kube/config`, then the session copy | set only to pin a file; skips the fetch |
+| `CIRRUS_KUBECONFIG_URL` | `https://s3.k8s.ucar.edu:5443/cirrus-config/kubeconfig` | where the published kubeconfig is fetched from at launch; empty disables the fetch |
+| `CIRRUS_PUBLISHED_KUBECONFIG` | `$CIRRUS_STATE_DIR/kube/cirrus-published.yaml` | where the fetch lands when `~/.kube` is not writable |
 | `CIRRUS_NAMESPACE` | inferred, loudly | `submit.yml.erb`, as `ood-<%= user %>` |
 | `CIRRUS_CONTEXT` | `mlc1` | override only to test another cluster |
 | `CIRRUS_WORKDIR` | `$HOME/cirrus-intro` | the one workshop directory: material, and whatever the lessons have you write |
@@ -155,13 +157,28 @@ their Casper and Derecho sessions. Everything happens on a copy at `$KUBECONFIG`
 which is ephemeral by design: it is derived state, rebuilt every launch, so it
 always reflects the current source config.
 
+There is no kubeconfig in the image. The one that used to be baked in pinned the
+cluster CAs, and went stale — failing TLS in every session — the first time one
+rotated. The current file lives in object storage instead, at
+`https://s3.k8s.ucar.edu:5443/cirrus-config/kubeconfig`; updating it there is all
+a rotation needs. That address is only reachable on the UCAR network, so it is
+fetched at launch, where a session pod can reach it, rather than at build time,
+where CI cannot.
+
 What it does:
 
+0. Fetches the published kubeconfig into `~/.kube/cirrus-config` (bounded at
+   about 20 s per attempt), after checking that what came back is a kubeconfig
+   with contexts. That is the one file in the shared home it writes, and Casper
+   and Derecho never read it. An existing copy that differs is moved to
+   `cirrus-config.bak.<timestamp>`, not overwritten. If `~/.kube` is not
+   writable the fetch lands in `$CIRRUS_PUBLISHED_KUBECONFIG` instead. A failed
+   fetch is a warning; whatever is already on disk is still searched.
 1. Refuses a `KUBECONFIG` containing `:`. kubectl treats that as a merge list and
    writes only to the first entry, so mutations would land somewhere the session
    does not read from.
-2. Errors out, naming the CIRRUS docs, if the source config is missing. It does
-   not synthesise one.
+2. Errors out, naming the CIRRUS docs and the fetch result, if no source config
+   exists. It does not synthesise one.
 3. Refuses to proceed if `KUBECONFIG` and `CIRRUS_KUBECONFIG_SRC` are the same
    file — compared by resolved path *and* `device:inode`, so a symlink or a
    differently-expanded `~` cannot slip past.
