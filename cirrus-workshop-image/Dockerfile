@@ -277,6 +277,7 @@ RUN set -eu; \
 
 COPY --chmod=0644 etc/profile.d/cirrus.sh /etc/profile.d/cirrus.sh
 COPY --chmod=0644 etc/profile.d/cirrus.csh /etc/profile.d/cirrus.csh
+COPY --chmod=0644 etc/cirrus/kubeconfig-guard.sh etc/cirrus/kubeconfig-guard.csh /etc/cirrus/
 
 # zsh does not read /etc/profile.d at all. /etc/zsh/zshenv is read by every zsh,
 # so the CIRRUS environment is sourced there (cirrus.sh is POSIX-compatible in
@@ -294,6 +295,7 @@ RUN set -eu; \
       echo 'autoload -Uz compinit && compinit -u'; \
       echo 'alias k=kubectl'; \
       echo 'compdef k=kubectl'; \
+      echo 'if [ -r /etc/cirrus/kubeconfig-guard.sh ]; then . /etc/cirrus/kubeconfig-guard.sh; fi'; \
     } >> /etc/zsh/zshrc
 
 # tcsh gets the environment but not completion: kubectl and friends emit bash and

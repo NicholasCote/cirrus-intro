@@ -422,6 +422,10 @@ fi
 # Now that the bootstrap has run and reported honestly which config it chose,
 # publish that choice to everything the session spawns.
 export CIRRUS_KUBECONFIG_SRC="${CIRRUS_KUBECONFIG_SRC:-$(cirrus-kubeconfig-src)}"
+# The path every terminal's prompt hook holds KUBECONFIG to, so that a user's
+# ~/.bashrc cannot point the workshop at some other cluster -- see
+# /etc/cirrus/kubeconfig-guard.sh.
+export CIRRUS_SESSION_KUBECONFIG="$KUBECONFIG"
 
 # ---------------------------------------------------------------------------
 # Proxy parameters. CIRRUS_PORT and CIRRUS_BASE_URL come from the OOD pod spec;

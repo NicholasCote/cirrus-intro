@@ -36,7 +36,8 @@ if ( ! $?HELM_CACHE_HOME )    setenv HELM_CACHE_HOME   "${CIRRUS_STATE_DIR}/helm
 if ( ! $?HELM_CONFIG_HOME )   setenv HELM_CONFIG_HOME  "${CIRRUS_STATE_DIR}/helm/config"
 if ( ! $?HELM_DATA_HOME )     setenv HELM_DATA_HOME    "${CIRRUS_STATE_DIR}/helm/data"
 
-if ( ! $?KUBECONFIG )         setenv KUBECONFIG        "${CIRRUS_STATE_DIR}/kube/config"
+if ( ! $?CIRRUS_SESSION_KUBECONFIG ) setenv CIRRUS_SESSION_KUBECONFIG "${CIRRUS_STATE_DIR}/kube/config"
+if ( ! $?KUBECONFIG )         setenv KUBECONFIG        "${CIRRUS_SESSION_KUBECONFIG}"
 if ( ! $?CIRRUS_WORKDIR )     setenv CIRRUS_WORKDIR    "${HOME}/cirrus-intro"
 
 # The workshop material -- see cirrus.sh. It lives in CIRRUS_WORKDIR itself.
@@ -48,3 +49,8 @@ if ( ! $?JUPYTER_CONFIG_DIR ) setenv JUPYTER_CONFIG_DIR "${CIRRUS_PERSIST_DIR}/j
 if ( ! $?CIRRUS_KUBECONFIG_SRC ) setenv CIRRUS_KUBECONFIG_SRC `cirrus-kubeconfig-src`
 
 alias k kubectl
+
+# Hold KUBECONFIG to the session copy, even against ~/.tcshrc -- see
+# /etc/cirrus/kubeconfig-guard.sh. Interactive shells only.
+if ( $?prompt && -r /etc/cirrus/kubeconfig-guard.csh ) alias precmd 'source /etc/cirrus/kubeconfig-guard.csh'
+

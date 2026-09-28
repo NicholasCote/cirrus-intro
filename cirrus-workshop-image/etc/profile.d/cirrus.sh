@@ -52,9 +52,12 @@ export HELM_DATA_HOME="${HELM_DATA_HOME:-${CIRRUS_STATE_DIR}/helm/data}"
 
 # ---------------------------------------------------------------------------
 # Kubernetes. KUBECONFIG is the session's working copy; CIRRUS_KUBECONFIG_SRC
-# is the user's real config, which is only ever read.
+# is the user's real config, which is only ever read. CIRRUS_SESSION_KUBECONFIG
+# is where the entrypoint put the working copy, and what the prompt hook below
+# holds interactive shells to.
 # ---------------------------------------------------------------------------
-export KUBECONFIG="${KUBECONFIG:-${CIRRUS_STATE_DIR}/kube/config}"
+export CIRRUS_SESSION_KUBECONFIG="${CIRRUS_SESSION_KUBECONFIG:-${CIRRUS_STATE_DIR}/kube/config}"
+export KUBECONFIG="${KUBECONFIG:-${CIRRUS_SESSION_KUBECONFIG}}"
 # Via the helper, not a hardcoded path: ~/.kube/cirrus-config is preferred over
 # ~/.kube/config, and that rule lives in one place.
 export CIRRUS_KUBECONFIG_SRC="${CIRRUS_KUBECONFIG_SRC:-$(cirrus-kubeconfig-src 2>/dev/null)}"
@@ -100,6 +103,11 @@ case "$-" in
             alias k=kubectl
             if type __start_kubectl >/dev/null 2>&1; then
                 complete -o default -F __start_kubectl k
+            fi
+
+            # Hold KUBECONFIG to the session copy, even against ~/.bashrc.
+            if [ -r /etc/cirrus/kubeconfig-guard.sh ]; then
+                . /etc/cirrus/kubeconfig-guard.sh
             fi
         fi
         ;;

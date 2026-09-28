@@ -96,6 +96,20 @@ else
     pass "session kubeconfig is readable (${KUBECONFIG_PATH})"
 fi
 
+# Terminals hold KUBECONFIG to the session copy with a prompt hook, so this only
+# fails when it was overridden on purpose or the hook never ran (a non-bash
+# shell with its own precmd, a script). Every check below reads KUBECONFIG, so a
+# wrong one here explains all of them.
+SESSION_KUBECONFIG="${CIRRUS_SESSION_KUBECONFIG:-${CIRRUS_STATE_DIR:-/tmp/cirrus}/kube/config}"
+if [ -n "$KUBECONFIG_PATH" ] && [ "$KUBECONFIG_PATH" != "$SESSION_KUBECONFIG" ]; then
+    fail "KUBECONFIG is the session copy" "KUBECONFIG is ${KUBECONFIG_PATH}, not the session copy ${SESSION_KUBECONFIG}.
+Everything below is checking that other file, not the one the workshop set up
+against CIRRUS. It was set by hand${CIRRUS_KUBECONFIG_OVERRIDE:+ (CIRRUS_KUBECONFIG_OVERRIDE is set)} or by your shell startup files.
+Fix this shell:  unset CIRRUS_KUBECONFIG_OVERRIDE; export KUBECONFIG=${SESSION_KUBECONFIG}"
+else
+    pass "KUBECONFIG is the session copy"
+fi
+
 # The session copy must not be the user's own file -- that one is shared with
 # their Casper and Derecho sessions and is only ever read.
 if [ -n "$KUBECONFIG_PATH" ] && [ -e "$KUBECONFIG_PATH" ] && [ -e "$SRC" ]; then

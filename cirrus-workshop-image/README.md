@@ -86,6 +86,8 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_PORT` | `8080` | pod spec (matches the existing CIRRUS OOD apps' fixed containerPort) |
 | `CIRRUS_BASE_URL` | `/` | pod spec / init container, for Jupyter |
 | `KUBECONFIG` | `/tmp/cirrus/kube/config` | pod spec — the session's **working copy** |
+| `CIRRUS_SESSION_KUBECONFIG` | `$KUBECONFIG` as the entrypoint resolved it | the entrypoint; terminals are held to it (see below) |
+| `CIRRUS_KUBECONFIG_OVERRIDE` | unset | set in a shell to point `KUBECONFIG` at another cluster on purpose |
 | `CIRRUS_KUBECONFIG_SRC` | searched: `~/.kube/cirrus-config`, `~/.kube/config`, then the session copy | set only to pin a file; skips the fetch |
 | `CIRRUS_KUBECONFIG_URL` | `https://s3.k8s.ucar.edu:5443/cirrus-config/kubeconfig` | where the published kubeconfig is fetched from at launch; empty disables the fetch |
 | `CIRRUS_PUBLISHED_KUBECONFIG` | `$CIRRUS_STATE_DIR/kube/cirrus-published.yaml` | where the fetch lands when `~/.kube` is not writable |
@@ -202,6 +204,18 @@ What it does:
 If it fails, the session still starts. A pod that refuses to come up is a
 crashloop the user cannot read; a session that starts with a broken kubeconfig
 shows them the error and lets them fix it and re-run.
+
+**Terminals stay on CIRRUS.** A user's own `~/.bashrc` runs after everything
+the image puts in `/etc/profile.d`, so an `export KUBECONFIG=...` there used to
+send the workshop to whatever cluster it named, and past the session token cache,
+so every `kubectl` asked for a new sign-in. A prompt hook
+(`/etc/cirrus/kubeconfig-guard.sh`, plus a `.csh` twin for tcsh) now resets
+`KUBECONFIG` to `CIRRUS_SESSION_KUBECONFIG` before every prompt in bash, zsh and
+tcsh, and says so when it does. It also catches `unset KUBECONFIG`, which would
+otherwise fall back to the Casper `~/.kube/config`. `CIRRUS_KUBECONFIG_OVERRIDE=1`
+turns it off for that shell. `cirrus-check` fails first on a `KUBECONFIG` that
+is not the session copy, and `cirrus-kubeconfig-init` refuses to write its
+output anywhere under `~/.kube`.
 
 > **First call authenticates.** With a cold token cache, the first `kubectl` in a
 > terminal prints a device-code URL. Run one there before using the `kubernetes`
