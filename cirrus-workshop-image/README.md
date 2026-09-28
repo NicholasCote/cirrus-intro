@@ -102,6 +102,7 @@ in the Dockerfile exist for local testing and CI only.
 | `CIRRUS_KUBELOGIN_CACHE_DIR` | `$HOME/.kube/cache/kubelogin` | point at `/tmp` if writing to the shared home is a problem |
 | `CIRRUS_TOKEN_CACHE` | `on` | `off` uses plain kubelogin — and then *every* kubectl call asks you to sign in |
 | `CIRRUS_TOKEN_CACHE_DIR` | `$CIRRUS_STATE_DIR/kube/token-cache` | where the session's bearer token is cached |
+| `CIRRUS_IDLE_TIMEOUT` | `3600` | seconds with no connection to `CIRRUS_PORT` before `cirrus-idle-watch` stops the server and the pod goes to Completed; `0` disables |
 | `CIRRUS_KUBECTL_TIMEOUT` | `300s` | `cirrus-check`'s API timeout; long enough for a human to complete a device-code sign-in |
 | `CIRRUS_EXTENSIONS_DIR` | `$CIRRUS_STATE_DIR/code-server/extensions` | |
 | `CIRRUS_CONTENT_REPO` | unset | git repository the material is pulled from at startup; `submit.yml.erb` sets it |

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# Ends the session once nobody has been connected to it for a while.
+#
+# Usage: cirrus-idle-watch <server-pid>
+#
+# The entrypoint starts this in the background just before it execs the
+# server, so <server-pid> is the entrypoint's own PID -- which the server
+# inherits. When no TCP connection to the server's port has been open for
+# CIRRUS_IDLE_TIMEOUT seconds, the server is sent SIGTERM. Both JupyterLab and
+# code-server exit 0 on SIGTERM, so the pod goes to Completed rather than being
+# restarted by its OnFailure policy.
+#
+# "Connected" is counted from /proc/net/tcp{,6} rather than from either editor's
+# own idea of activity, so it means the same thing in both: an open browser tab
+# holds a websocket through the OOD proxy, and closing it (or the laptop going
+# to sleep) drops it. A kernel or terminal left running does NOT keep the
+# session alive on its own. Jupyter's shutdown_no_activity_timeout, by
+# contrast, never fires while a kernel or terminal exists, and code-server's
+# --idle-timeout-seconds only covers code-server.
+#
+# The clock starts at launch, so a session nobody ever opens goes away too.
+
+PROG="cirrus-idle-watch"
+log() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+
+SERVER_PID="${1:?usage: cirrus-idle-watch <server-pid>}"
+TIMEOUT="${CIRRUS_IDLE_TIMEOUT:-3600}"
+INTERVAL="${CIRRUS_IDLE_INTERVAL:-60}"
+PORT="${CIRRUS_PORT:-8080}"
+
+case "$TIMEOUT" in
+    ''|*[!0-9]*) log "CIRRUS_IDLE_TIMEOUT='${TIMEOUT}' is not a number of seconds; idle shutdown disabled"; exit 0 ;;
+    0)           log "CIRRUS_IDLE_TIMEOUT=0; idle shutdown disabled"; exit 0 ;;
+esac
+
+# /proc/net/tcp lists "local_address" as HEXIP:HEXPORT and "st" 01 for
+# ESTABLISHED. Listening sockets (0A) and the server's own outbound
+# connections (a different local port) are not counted.
+PORT_HEX="$(printf '%04X' "$PORT")"
+connections() {
+    awk -v port="$PORT_HEX" '
+        FNR > 1 { split($2, a, ":"); if (a[2] == port && $4 == "01") n++ }
+        END { print n + 0 }
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+log "ending the session after ${TIMEOUT}s with no connection to port ${PORT}"
+last_seen="$(date +%s)"
+while kill -0 "$SERVER_PID" 2>/dev/null; do
+    sleep "$INTERVAL"
+    now="$(date +%s)"
+    if [ "$(connections)" -gt 0 ]; then
+        last_seen="$now"
+    elif [ $(( now - last_seen )) -ge "$TIMEOUT" ]; then
+        log "no connection for $(( now - last_seen ))s; stopping the server (pid ${SERVER_PID})"
+        kill -TERM "$SERVER_PID"
+        exit 0
+    fi
+done

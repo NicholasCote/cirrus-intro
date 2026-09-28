@@ -7,6 +7,7 @@ form:
   - working_dir
   - cpu
   - memory
+  - bc_num_hours
 
 attributes:
   editor:
@@ -64,3 +65,11 @@ attributes:
     value: 4
     step: 1
     required: true
+
+  # Not a choice: every session gets the 24-hour cap. OOD turns this into the
+  # pod's walltime (the pod.kubernetes.io/lifetime annotation job-pod-reaper
+  # acts on). Disconnected sessions end much sooner, after an hour; see
+  # cirrus-idle-watch in the image.
+  bc_num_hours:
+    widget: hidden_field
+    value: 24

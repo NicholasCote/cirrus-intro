@@ -10,7 +10,7 @@ which reads like a broken manifest rather than a misplaced one.
 
 ```
 manifest.yml            app name, category, description
-form.yml                editor, shell, working dir, cpu, memory
+form.yml                editor, shell, working dir, cpu, memory, hours (hidden: 24)
 submit.yml.erb          pod spec: image, env, mounts, init containers
 view.html.erb           the Connect button (picks /node/ vs /rnode/)
 info.md.erb             session card: which editor and shell were chosen

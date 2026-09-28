@@ -489,7 +489,13 @@ bootstrap)
     log "  user               : $(id -un 2>/dev/null || echo '<no passwd entry>') (uid $(id -u), gid $(id -g))"
     exit 0
     ;;
+esac
 
+# Both servers are exec'd below, so they take over this PID -- which is the one
+# the watcher is told to stop once nobody has been connected for an hour.
+/usr/local/bin/cirrus-idle-watch "$$" &
+
+case "$MODE" in
 jupyter)
     # OOD serves Jupyter through /node/<host>/<port>/, which forwards the whole
     # path, so the server has to be told the prefix it lives under -- that is
