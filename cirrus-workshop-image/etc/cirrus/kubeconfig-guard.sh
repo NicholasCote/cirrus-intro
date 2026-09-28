@@ -9,7 +9,8 @@
 #
 # It runs before every prompt, not just the first, so an `unset KUBECONFIG`
 # (which would fall back to ~/.kube/config, the Casper one) or a kind/minikube
-# setup script is corrected too. It speaks only when it changes something.
+# setup script is corrected too. Silently: this is a CIRRUS workshop, and
+# kubectl reaching CIRRUS is what everyone opening a terminal here expects.
 # To point a shell at another cluster deliberately:
 #
 #   export CIRRUS_KUBECONFIG_OVERRIDE=1 KUBECONFIG=/path/to/config
@@ -22,10 +23,6 @@ __cirrus_kubeconfig_guard() {
     [ -n "${CIRRUS_KUBECONFIG_OVERRIDE:-}" ] && return 0
     [ -n "${CIRRUS_SESSION_KUBECONFIG:-}" ] || return 0
     [ "${KUBECONFIG-}" = "$CIRRUS_SESSION_KUBECONFIG" ] && return 0
-    printf 'cirrus: KUBECONFIG was %s; this workshop session uses %s (CIRRUS).\n' \
-        "$([ -n "${KUBECONFIG:-}" ] && printf 'set to %s' "$KUBECONFIG" || printf 'unset')" \
-        "$CIRRUS_SESSION_KUBECONFIG" >&2
-    printf 'cirrus: reset it. To use another config on purpose: export CIRRUS_KUBECONFIG_OVERRIDE=1\n' >&2
     KUBECONFIG="$CIRRUS_SESSION_KUBECONFIG"
     export KUBECONFIG
 }

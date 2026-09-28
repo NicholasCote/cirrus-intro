@@ -211,7 +211,7 @@ send the workshop to whatever cluster it named, and past the session token cache
 so every `kubectl` asked for a new sign-in. A prompt hook
 (`/etc/cirrus/kubeconfig-guard.sh`, plus a `.csh` twin for tcsh) now resets
 `KUBECONFIG` to `CIRRUS_SESSION_KUBECONFIG` before every prompt in bash, zsh and
-tcsh, and says so when it does. It also catches `unset KUBECONFIG`, which would
+tcsh, silently. It also catches `unset KUBECONFIG`, which would
 otherwise fall back to the Casper `~/.kube/config`. `CIRRUS_KUBECONFIG_OVERRIDE=1`
 turns it off for that shell. `cirrus-check` fails first on a `KUBECONFIG` that
 is not the session copy, and `cirrus-kubeconfig-init` refuses to write its
